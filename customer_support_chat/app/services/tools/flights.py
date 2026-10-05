@@ -145,3 +145,236 @@ def cancel_ticket(ticket_no: str, *, config: RunnableConfig) -> str:
 
     conn.close()
     return f"Ticket {ticket_no} successfully cancelled."
+@tool
+def book_flight(
+    flight_id: int,
+    fare_conditions: str = "Economy",
+    *,
+    config: RunnableConfig
+) -> str:
+    """Book a selected flight for the configured passenger."""
+
+    configuration = config.get("configurable", {})
+    passenger_id = configuration.get("passenger_id")
+
+    if not passenger_id:
+        raise ValueError("No passenger ID configured.")
+
+    conn = sqlite3.connect(db)
+    cursor = conn.cursor()
+
+    try:
+        # -------------------------------------------------
+        # 1. Check passenger exists
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            SELECT ticket_no
+            FROM tickets
+            WHERE passenger_id = ?
+            LIMIT 1
+            """,
+            (passenger_id,)
+        )
+
+        passenger_ticket = cursor.fetchone()
+
+        if not passenger_ticket:
+            return f"Passenger {passenger_id} was not found."
+
+        # -------------------------------------------------
+        # 2. Check flight exists
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            SELECT
+                flight_id,
+                flight_no,
+                departure_airport,
+                arrival_airport,
+                scheduled_departure
+            FROM flights
+            WHERE flight_id = ?
+            """,
+            (flight_id,)
+        )
+
+        flight = cursor.fetchone()
+
+        if not flight:
+            return f"Flight {flight_id} does not exist."
+
+        # -------------------------------------------------
+        # 3. Find valid fare for this flight
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            SELECT amount
+            FROM ticket_flights
+            WHERE flight_id = ?
+              AND fare_conditions = ?
+            LIMIT 1
+            """,
+            (flight_id, fare_conditions)
+        )
+
+        fare = cursor.fetchone()
+
+        if not fare:
+            return (
+                f"Fare '{fare_conditions}' is not available "
+                f"for flight {flight_id}."
+            )
+
+        amount = fare[0]
+
+        # -------------------------------------------------
+        # 4. Check duplicate booking
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            SELECT t.ticket_no
+            FROM tickets t
+            JOIN ticket_flights tf
+                ON t.ticket_no = tf.ticket_no
+            WHERE t.passenger_id = ?
+              AND tf.flight_id = ?
+            """,
+            (passenger_id, flight_id)
+        )
+
+        duplicate = cursor.fetchone()
+
+        if duplicate:
+            return (
+                f"Passenger {passenger_id} is already booked "
+                f"on flight {flight_id}."
+            )
+
+        # -------------------------------------------------
+        # 5. Generate booking reference
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            SELECT book_ref
+            FROM bookings
+            ORDER BY rowid DESC
+            LIMIT 1
+            """
+        )
+
+        last_booking = cursor.fetchone()
+
+        if last_booking:
+            try:
+                next_number = int(last_booking[0], 16) + 1
+            except ValueError:
+                next_number = 1
+        else:
+            next_number = 1
+
+        book_ref = f"{next_number:06X}"
+
+        # -------------------------------------------------
+        # 6. Generate ticket number
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            SELECT ticket_no
+            FROM tickets
+            ORDER BY rowid DESC
+            LIMIT 1
+            """
+        )
+
+        last_ticket = cursor.fetchone()
+
+        if last_ticket:
+            try:
+                next_ticket = int(last_ticket[0]) + 1
+            except ValueError:
+                next_ticket = 1
+        else:
+            next_ticket = 1
+
+        ticket_no = str(next_ticket).zfill(16)
+
+        # -------------------------------------------------
+        # 7. Create booking
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            INSERT INTO bookings (
+                book_ref,
+                book_date,
+                total_amount
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                book_ref,
+                datetime.now(pytz.UTC).isoformat(),
+                amount
+            )
+        )
+
+        # -------------------------------------------------
+        # 8. Create ticket
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            INSERT INTO tickets (
+                ticket_no,
+                book_ref,
+                passenger_id
+            )
+            VALUES (?, ?, ?)
+            """,
+            (
+                ticket_no,
+                book_ref,
+                passenger_id
+            )
+        )
+
+        # -------------------------------------------------
+        # 9. Connect ticket to flight
+        # -------------------------------------------------
+        cursor.execute(
+            """
+            INSERT INTO ticket_flights (
+                ticket_no,
+                flight_id,
+                fare_conditions,
+                amount
+            )
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                ticket_no,
+                flight_id,
+                fare_conditions,
+                amount
+            )
+        )
+
+        conn.commit()
+
+        return (
+            "BOOKING CONFIRMED\n"
+            f"Booking Reference: {book_ref}\n"
+            f"Ticket Number: {ticket_no}\n"
+            f"Passenger: {passenger_id}\n"
+            f"Flight: {flight[1]}\n"
+            f"Route: {flight[2]} -> {flight[3]}\n"
+            f"Departure: {flight[4]}\n"
+            f"Fare: {fare_conditions}\n"
+            f"Amount: {amount}"
+        )
+
+    except Exception:
+        conn.rollback()
+        raise
+
+    finally:
+        conn.close()
