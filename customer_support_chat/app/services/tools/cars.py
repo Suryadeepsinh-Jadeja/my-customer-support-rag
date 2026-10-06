@@ -13,9 +13,9 @@ cars_vectordb = VectorDB(table_name="car_rentals", collection_name="car_rentals_
 @tool
 def search_car_rentals(
     query: str,
-    limit: int = 2,
+    limit: int = 5,
 ) -> List[Dict]:
-    """Search for car rentals based on a natural language query."""
+    """Search car rentals with a natural language query, e.g. "economy car in Basel"."""
     search_results = cars_vectordb.search(query, limit=limit)
 
     rentals = []
@@ -53,12 +53,20 @@ def book_car_rental(rental_id: int) -> str:
 @tool
 def update_car_rental(
     rental_id: int,
-    start_date: Optional[Union[datetime, date]] = None,
-    end_date: Optional[Union[datetime, date]] = None,
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
 ) -> str:
-    """Update a car rental's start and end dates by its ID."""
+    """Update a car rental's start and/or end dates (YYYY-MM-DD) by its ID."""
+    if not start_date and not end_date:
+        return "Nothing to update: provide a new start_date and/or end_date (YYYY-MM-DD)."
+
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
+
+    cursor.execute("SELECT 1 FROM car_rentals WHERE id = ?", (rental_id,))
+    if cursor.fetchone() is None:
+        conn.close()
+        return f"No car rental found with ID {rental_id}."
 
     if start_date:
         cursor.execute(

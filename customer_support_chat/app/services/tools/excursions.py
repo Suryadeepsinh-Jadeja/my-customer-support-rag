@@ -11,9 +11,9 @@ excursions_vectordb = VectorDB(table_name="trip_recommendations", collection_nam
 @tool
 def search_trip_recommendations(
     query: str,
-    limit: int = 2,
+    limit: int = 5,
 ) -> List[Dict]:
-    """Search for trip recommendations based on a natural language query."""
+    """Search excursions/trip recommendations with a natural language query, e.g. "art museum in Basel"."""
     search_results = excursions_vectordb.search(query, limit=limit)
 
     recommendations = []
