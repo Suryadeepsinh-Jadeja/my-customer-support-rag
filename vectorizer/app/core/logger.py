@@ -2,6 +2,7 @@ import logging
 
 # Create a custom logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 # Create handlers
 c_handler = logging.StreamHandler()
