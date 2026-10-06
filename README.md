@@ -35,7 +35,7 @@ Accounts and keys (all free for development):
 
 | Key | Required? | Where to get it |
 |---|---|---|
-| Google Gemini API key | Recommended | [Google AI Studio](https://aistudio.google.com/apikey) → *Create API key*. Without it the app still runs, but documents are read by simpler built-in rules, search is keyword-only and the chat assistant replies that it isn't available. |
+| Google Gemini API key | Recommended | [Google AI Studio](https://aistudio.google.com/apikey) → *Create API key*. Without it the app still runs, but documents are read by simpler built-in rules, search is keyword-only and the chat assistant replies that it isn't available. To try the whole app without a key, set `LLM_PROVIDER=fake` in `backend/.env`: a scripted test assistant that only understands the demo questions in section 5. |
 | Duffel test key | Optional | Sign up at [duffel.com](https://duffel.com), then Dashboard → **More** → **Developers** → **Access tokens** → *Create access token* in **test** mode. It starts with `duffel_test_`. Without it, flights use the built-in mock. |
 
 Never commit keys. `backend/.env` and `frontend/.env.local` are git-ignored; the
@@ -231,6 +231,35 @@ npm run lint && npm run typecheck && npm run build
   `backend/.env` says.
 - To run them against PostgreSQL, set
   `TEST_DATABASE_URL=postgresql+asyncpg://...` (CI does both).
+- Coverage report: `pytest --cov --cov-report=term` (about 83% of `app/`).
+
+### End-to-end test (browser)
+
+`frontend/e2e/demo.spec.ts` runs the whole demo in a real browser: register, upload a
+passport, ticket and hotel booking, ask the three questions, book a flight, confirm,
+cancel and confirm. It starts its own API on port 8200 (fresh SQLite database, a
+rule-based fake LLM, the mock provider; nothing calls Gemini or Duffel) and a production
+build of the frontend on port 3100. It needs the backend installed in `backend/.venv` (or
+set `E2E_PYTHON` to a Python that has it).
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
+Locally it drives **Microsoft Edge**, so no browser download is needed. Use
+`E2E_CHANNEL=chrome npm run test:e2e` for Google Chrome. Playwright's own browsers are only
+needed in CI (`npx playwright install --only-shell chromium`, about 100 MB).
+
+### Continuous integration
+
+`.github/workflows/platform-ci.yml` runs on pushes to `main` and `rebuild` and on pull
+requests:
+- backend lint, type check, and tests on SQLite (with a coverage report) and on
+  PostgreSQL + pgvector;
+- frontend lint, type check and build;
+- the browser E2E demo against PostgreSQL;
+- Docker image builds.
 
 ## 8. Configuration reference
 
@@ -243,6 +272,7 @@ likely to change:
 | `JWT_SECRET` | none | Signs sign-in tokens. Required in production (32+ characters) |
 | `STORAGE_ENCRYPTION_KEY` | none | Encrypts uploaded files. Required in production; keep a backup |
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | none / `gemini-3.5-flash` | AI document analysis, embeddings and the assistant |
+| `LLM_PROVIDER` | `gemini` | `fake` = a rule-based stand-in for tests and keyless demos (refused in production) |
 | `FLIGHT_PROVIDER` / `DUFFEL_API_KEY` | `mock` / none | `duffel` + a test key for Duffel's sandbox |
 | `STORAGE_BACKEND` | `local` | `s3` for any S3-compatible store (set the `OBJECT_STORAGE_*` values) |
 | `WORKER_MODE` | `inline` | `external` to process documents with `python -m app.worker` |
@@ -275,6 +305,7 @@ backend/            FastAPI app (app/), migrations (alembic/), tests (tests/)
   app/rag/          chunking, hybrid retrieval, knowledge-base ingestion
   app/services/     auth, documents, chat, bookings, payments, LLM
 frontend/           Next.js app
+  e2e/              Playwright end-to-end demo test and its fixtures
 knowledge_base/     travel-policy Markdown loaded into the assistant's search
 docs/               implementation plan, legacy app documentation
 docker-compose.platform.yml   the full stack in Docker

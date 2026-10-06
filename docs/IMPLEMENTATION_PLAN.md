@@ -22,8 +22,8 @@ start phase N."*
 | 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | Done | |
 | 8 | Chat UI, booking UI, cards, confirmation dialogs | Done | |
 | 9 | Security hardening, Redis rate limiting, admin panel | Done | |
-| 10 | Integration + E2E tests, CI/CD completion | **Next** | |
-| 11 | Deployment, monitoring, final docs, retire the old app | Planned | |
+| 10 | Integration + E2E tests, CI/CD completion | Done | |
+| 11 | Deployment, monitoring, final docs, retire the old app | **Next** | |
 
 - **Repository:** https://github.com/Suryadeepsinh-Jadeja/my-customer-support-rag, branch
   `rebuild`, one commit per phase. No `Co-Authored-By` or other AI attribution lines in commits.
@@ -534,7 +534,23 @@ Tests: `tests/test_duffel.py`, `tests/test_booking_safety.py`.
 
 ---
 
-## 11. Phase 10: tests and CI (§45, §74)
+## 11. Phase 10: tests and CI (done)
+
+**As built:**
+- **E2E scripting:** the backend's LLM fake is gated by `LLM_PROVIDER=fake` (refused in
+  production) rather than `APP_ENV=test`. `FakeLLM` subclasses `LLMService` and
+  answers from keywords; extend `_step` when the demo grows.
+- **E2E run:** `frontend/e2e/start-backend.mjs` sets every relevant env var, so
+  `backend/.env` (e.g. a Duffel key) never leaks into the run. The frontend is built
+  and run with `next start`: only one `next dev` can run per folder. Next.js warns that
+  `next start` doesn't support `output: standalone`, but it works for the test.
+- **E2E uploads** are plain-text fixtures (`frontend/e2e/fixtures/*.txt`) generated
+  from `backend/tests/samples.py`.
+- **Browsers:** locally Playwright uses Edge (`channel: msedge`, or `E2E_CHANNEL`), so
+  no 700 MB browser download. CI installs only the headless shell.
+- **CI** used to run only for `main` and PRs; it now also runs for `rebuild`.
+
+### Original phase 10 plan
 
 - **Integration:** upload → extraction → embedding → chat answer, using the fake LLM and
   fake embedder (already partly covered).

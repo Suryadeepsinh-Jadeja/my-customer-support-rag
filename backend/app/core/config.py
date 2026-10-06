@@ -46,6 +46,8 @@ class Settings(BaseSettings):
 
     # Google Gemini
     GEMINI_API_KEY: str = ""
+    # "fake": a rule-based stand-in for end-to-end tests and keyless demos (never production).
+    LLM_PROVIDER: Literal["gemini", "fake"] = "gemini"
     GEMINI_MODEL: str = "gemini-3.5-flash"
     LLM_TIMEOUT_SECONDS: int = Field(default=60, ge=5)
 
@@ -101,6 +103,8 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must be at least 32 characters in production")
         if self.APP_ENV == "production" and not self.STORAGE_ENCRYPTION_KEY:
             raise ValueError("STORAGE_ENCRYPTION_KEY must be set in production")
+        if self.APP_ENV == "production" and self.LLM_PROVIDER == "fake":
+            raise ValueError("LLM_PROVIDER=fake is for tests only, not production")
         return self
 
     @property

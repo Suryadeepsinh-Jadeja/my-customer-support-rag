@@ -257,5 +257,9 @@ EMBEDDING_MODEL = "gemini-embedding-001"
 @lru_cache
 def get_llm() -> LLMService:
     settings = get_settings()
+    if settings.LLM_PROVIDER == "fake":
+        from app.services.fake_llm import FakeLLM
+
+        return FakeLLM()
     return LLMService(settings.GEMINI_API_KEY, settings.GEMINI_MODEL,
                       settings.LLM_TIMEOUT_SECONDS)

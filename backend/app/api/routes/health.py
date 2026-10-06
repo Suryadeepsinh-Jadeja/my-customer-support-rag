@@ -9,6 +9,7 @@ from sqlalchemy import text
 from app.core import rate_limit
 from app.core.config import get_settings
 from app.db.database import get_engine
+from app.services.llm_service import get_llm
 from app.services.malware import get_scanner
 from app.services.ocr import get_ocr
 from app.services.storage import get_storage
@@ -50,7 +51,8 @@ async def readiness() -> dict:
     ocr = get_ocr()
     checks["ocr"] = {"ok": True, "provider": ocr.name if ocr else "unavailable"}
     checks["malware_scanner"] = {"ok": True, "provider": get_scanner().name}
-    checks["llm"] = {"ok": True, "configured": bool(settings.GEMINI_API_KEY)}
+    checks["llm"] = {"ok": True, "configured": get_llm().configured,
+                     "provider": settings.LLM_PROVIDER}
     checks["worker"] = {"ok": True, "mode": settings.WORKER_MODE}
 
     if isinstance(rate_limit.limiter, rate_limit.RedisRateLimiter):

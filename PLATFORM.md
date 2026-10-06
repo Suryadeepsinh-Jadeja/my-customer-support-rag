@@ -29,7 +29,7 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 | 7 | Real provider adapter, price revalidation, confirmation tokens, idempotency, booking state machine | **Done** |
 | 8 | Chat UI, documents UI, bookings UI, flight cards, confirmation dialogs | **Done** |
 | 9 | Redis-backed rate limiting, PII protection, prompt-injection defences, admin panel | **Done** |
-| 10 | Unit/integration/E2E tests, CI/CD, production Docker builds | Partly (see below) |
+| 10 | Unit/integration/E2E tests, CI/CD, production Docker builds | **Done** |
 | 11 | Deployment config, monitoring, full documentation | Not started |
 
 ### What phase 1 delivers
@@ -409,6 +409,35 @@ Checked in the browser: the admin page as an admin (health, users, masked bookin
 stats) and Delete account showing "The password is incorrect." for a wrong password.
 Non-admins get 403 from the API (tested); the sidebar shows the Admin link only for the
 admin role.
+
+### What phase 10 delivers
+
+- **Rule-based fake LLM** (`LLM_PROVIDER=fake`, `app/services/fake_llm.py`; refused when
+  `APP_ENV=production`):
+  - It understands the demo conversation and drives the real tools, so routing, tools,
+    sources, cards, confirmations and bookings all run for real.
+  - Embeddings are hashed bags of words, so retrieval works without a key.
+  - It is used by the integration and E2E tests, and allows a keyless demo.
+- **Integration test** (`tests/test_demo_flow.py`), through the API:
+  - upload a passport, ticket and hotel booking; processing; chunks with embeddings;
+  - "What is my flight number?" (LX154, cited from the ticket), arrival time (07:10, ZRH)
+    and baggage (1 x 23 kg, plus the Baggage Policy source);
+  - "Book my flight to London for <date>" (5 BOM→LHR offers, origin from the profile),
+    select, confirm (booked), "Cancel my flight" (refund quote), confirm (cancelled);
+  - the audit trail.
+- **E2E test** (`frontend/e2e/demo.spec.ts`, Playwright): the same demo in a real
+  browser, through the UI. It covers registration, profile, uploads until "Ready for AI",
+  answers and source chips, flight cards and Select, the confirmation dialog, the
+  Bookings page, and cancellation through chat with the Cancelled tab. Its own servers
+  start on 8200/3100. It passes locally in about 10 s, using Edge, so no browser
+  download.
+- **CI** (`.github/workflows/platform-ci.yml`):
+  - now also runs on pushes to `rebuild`, which it didn't before;
+  - backend coverage report (uploaded as an artifact);
+  - a new `e2e` job: PostgreSQL + pgvector, the backend, a production frontend build,
+    Playwright's headless Chromium. The Playwright report is kept on failure.
+  - Already there: lint, mypy, tsc, tests on SQLite and PostgreSQL, build, Docker image
+    builds.
 
 **Already partly covering later phases:** auth rate limiting (in-memory, per process;
 Redis comes in phase 9), audit logging, request IDs, CI (`.github/workflows/platform-ci.yml`:

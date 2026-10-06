@@ -1,0 +1,8 @@
+Hotel reservation confirmation
+Guest name: Asha Mehta
+Hotel: The Strand Palace
+Address: 372 Strand, London WC2R 0JJ
+Check-in: 2026-10-20
+Check-out: 2026-10-23
+Confirmation number: HSP-99812
+Room type: Double
