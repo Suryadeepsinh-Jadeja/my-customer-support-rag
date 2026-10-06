@@ -1,9 +1,10 @@
 import uuid
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.idempotency import idempotent
 from app.api.routes.bookings import BOOKING_RATE_LIMIT_PER_MINUTE
 from app.core import rate_limit
 from app.db.database import get_db
@@ -17,7 +18,7 @@ from app.schemas.chat import (
     ConversationOut,
     MessageOut,
 )
-from app.services.booking_service import BookingService, booking_card
+from app.services.booking_service import BookingService
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["chat"])
@@ -43,20 +44,25 @@ async def chat(body: ChatRequest, user: User = Depends(get_current_user),
 
 @router.post("/chat/confirm", response_model=ConfirmResponse,
              summary="Approve or decline a booking, change or cancellation")
-async def confirm(body: ConfirmRequest, user: User = Depends(get_current_user),
-                  db: AsyncSession = Depends(get_db)):
+async def confirm(body: ConfirmRequest, request: Request,
+                  user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """The only way a sensitive action runs. The request must belong to you, still be
-    pending and not have expired (10 minutes); each one can be used once."""
+    pending and not have expired (10 minutes); each one can be used once. Supports
+    `Idempotency-Key`: a retry with the same key returns the same result."""
     rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
-    outcome = await BookingService(db, user).confirm(body.confirmation_id, body.approved)
-    booking = outcome.booking
-    return ConfirmResponse(
-        confirmation_id=outcome.confirmation.id, status=outcome.confirmation.status.value,
-        message=AssistantMessage(type=outcome.message_type,  # type: ignore[arg-type]
-                                 text=outcome.text, sources=[],
-                                 cards=[booking_card(booking)] if booking else []),
-        booking=BookingOut.from_booking(booking) if booking else None,
-    )
+
+    async def run() -> ConfirmResponse:
+        outcome = await BookingService(db, user).confirm(body.confirmation_id, body.approved)
+        booking = outcome.booking
+        return ConfirmResponse(
+            confirmation_id=outcome.confirmation.id,
+            status=outcome.confirmation.status.value,
+            message=AssistantMessage(type=outcome.message_type,  # type: ignore[arg-type]
+                                     text=outcome.text, sources=[], cards=outcome.cards),
+            booking=BookingOut.from_booking(booking) if booking else None,
+        )
+
+    return await idempotent(request, db, user, body.model_dump(mode="json"), run)
 
 
 @router.get("/conversations", response_model=list[ConversationOut],

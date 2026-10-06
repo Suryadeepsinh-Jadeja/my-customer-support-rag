@@ -26,7 +26,7 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 | 4 | Gemini service, structured output, conversation memory, supervisor agent | **Done** |
 | 5 | Flight, hotel, car, excursion and document agents | **Done** |
 | 6 | Mock booking providers; flight/hotel/car booking and cancellation | **Done** |
-| 7 | Real provider adapter, price revalidation, confirmation tokens, idempotency, booking state machine | Not started |
+| 7 | Real provider adapter, price revalidation, confirmation tokens, idempotency, booking state machine | **Done** |
 | 8 | Chat UI, documents UI, bookings UI, flight cards, confirmation dialogs | Not started |
 | 9 | Redis-backed rate limiting, PII protection, prompt-injection defences, admin panel | Partly (see below) |
 | 10 | Unit/integration/E2E tests, CI/CD, production Docker builds | Partly (see below) |
@@ -258,65 +258,66 @@ Live check with real Gemini (§84 steps 7-8, home airport BOM in the profile):
 5. Confirm pressed: "Cancelled ... Refund: 0.00 CHF"; status cancelled. Audit log:
    `booking.book_requested`, `booking.create`, `booking.cancel_requested`, `booking.cancel`.
 
+### What phase 7 delivers
+
+- **Duffel adapter** (`app/providers/duffel.py`, httpx), used for flights when
+  `FLIGHT_PROVIDER=duffel` and `DUFFEL_API_KEY` is set (a `duffel_test_` key gives
+  Duffel's sandbox):
+  - offer request → offers (one adult, cheapest 5);
+  - `GET /air/offers/{id}` for the current price;
+  - an instant order paid from the Duffel balance;
+  - cancellation quoted with an order cancellation, then confirmed.
+  Duffel errors map to `ProviderError(code)` with a safe message. Hotels, cars and
+  excursions stay on the mock. Date changes aren't supported through Duffel (the user is
+  told to cancel and rebook).
+- **Traveller details:** a booking's travellers are `{name, born_on, gender}`, filled from
+  the latest passport (else the profile name). The user's email and profile phone are
+  passed as contact details when booking. Real orders need all of these; the mock ignores
+  them. Confirmation summaries and booking cards only show names.
+- **Price revalidation (§61):** confirming a booking fetches the offer again. If the price
+  moved, nothing is booked or charged: the confirmation is expired and a new one is
+  returned (`CONFIRMATION_REQUEST`, "The price changed from X to Y ... Confirm again to
+  continue at the new price"). Date changes are re-quoted the same way.
+- **Idempotency (§62):** `POST /api/chat/confirm`, `/api/bookings/{id}/cancel` and
+  `/modify` accept an `Idempotency-Key` header.
+  - A repeat with the same key returns the stored response (`Idempotent-Replayed: true`)
+    without acting again.
+  - Reusing a key for a different request is refused (409).
+  - Keys live in `idempotency_keys` (migration 0006).
+  - Confirmations stay single-use regardless.
+- **Payments (§26):** `payment_service.create_payment_session()` attaches a test session
+  (`ps_test_...`, status `test_paid`) to each confirmed booking. The assistant only sees
+  `payment_status` on the booking card; no card data exists anywhere. Stripe test mode
+  would slot in there.
+
+Verified live against the **Duffel sandbox** (test key):
+- **Adapter only:** search LHR-JFK, re-price, order (reference JPZ3RG), refund quote and
+  cancel all worked unchanged.
+- **Full assistant flow, real Gemini + Duffel:** with the profile name matching the
+  uploaded passport, the steps were:
+  1. "Book my flight to London for October 20" listed real sandbox offers for BOM-LHR.
+  2. "Book the cheapest one please" produced a confirmation card for American Airlines
+     AA118, USD 276.76, passenger from the passport.
+  3. Confirm created a Duffel order with reference **V4MSN3**.
+  4. "Cancel my flight" showed Duffel's refund quote.
+  5. Confirm cancelled it at Duffel with USD 276.76 refunded, and the audit trail is
+     complete.
+- **Bug found and fixed:** the live run exposed one bug, which now has a regression
+  test. When the model named the passport holder explicitly, the date of birth and gender
+  were dropped.
+- **Mock regression check:** the mock booking flow was also re-run live.
+
+The Duffel tests use responses recorded in that sandbox session (`tests/fixtures/duffel/`,
+trimmed of fields the adapter doesn't read).
+
 **Already partly covering later phases:** auth rate limiting (in-memory, per process;
 Redis comes in phase 9), audit logging, request IDs, CI (`.github/workflows/platform-ci.yml`:
 lint, type check, tests on SQLite *and* PostgreSQL+pgvector, production build, Docker builds).
 
 ## Running it
 
-### With Docker (recommended)
-
-```bash
-cp backend/.env.example backend/.env    # then set JWT_SECRET
-docker compose -f docker-compose.platform.yml up -d --build
-```
-
-Frontend on http://localhost:3000, API docs on http://localhost:8000/docs, MinIO console on
-http://localhost:9001. The backend container runs `alembic upgrade head` on start; the
-`worker` container processes uploaded documents. Add `--profile scan` (and
-`MALWARE_SCANNER=clamav`) to run ClamAV.
-
-Create an administrator:
-
-```bash
-docker compose -f docker-compose.platform.yml exec backend python -m app.cli create-admin admin@example.com
-```
-
-### Without Docker
-
-Backend (Python 3.12):
-
-```bash
-cd backend
-python -m venv .venv && .venv/Scripts/activate      # macOS/Linux: source .venv/bin/activate
-pip install -e ".[dev]"
-cp .env.example .env     # point DATABASE_URL at PostgreSQL, or use the SQLite line for a quick start
-alembic upgrade head
-uvicorn app.main:app --reload --port 8000
-python -m app.worker        # only if WORKER_MODE=external
-```
-
-For OCR of scans and photos install [Tesseract](https://github.com/tesseract-ocr/tesseract)
-or set `GEMINI_API_KEY` (Gemini vision is used when Tesseract is missing).
-
-Frontend (Node 24):
-
-```bash
-cd frontend
-npm install
-cp .env.example .env.local     # BACKEND_URL, if the API isn't on 127.0.0.1:8000
-npm run dev
-```
-
-### Checks
-
-```bash
-cd backend && ruff check . && mypy app && pytest -q
-cd frontend && npm run lint && npm run typecheck && npm run build
-```
-
-Backend tests use a temporary SQLite database built by the real migrations. Set
-`TEST_DATABASE_URL=postgresql+asyncpg://...` to run them against PostgreSQL (CI does both).
+Setup (Docker or without Docker), keys, checks and troubleshooting are in the
+[README](README.md).
 
 ## API
 
@@ -367,9 +368,12 @@ Backend tests use a temporary SQLite database built by the real migrations. Set
 - Sources list every document or policy section a tool returned during the turn, not only
   the ones the final answer relied on, so they can over-cite (e.g. a ticket listed when
   the answer is "no hotel booking found").
-- Bookings use the mock provider only. The offer is re-fetched when the user confirms, but
-  the price isn't compared yet (price revalidation, idempotency keys and payments come in
-  phase 7). Mock flight durations are random, not based on real routes.
+- Duffel: searches are for one adult; the passenger name is split into given/family name
+  at the last space; a real order needs the traveller's passport (date of birth, gender)
+  and a profile phone number, otherwise the booking fails with a clear message. Tests
+  always use the mock provider, whatever `backend/.env` says.
+- Payments are a test session only (no Stripe yet). Idempotency keys are kept forever
+  (no clean-up job yet). Mock flight durations are random, not based on real routes.
 - Gemini's free tier rate-limits quickly; the assistant then replies with an `ERROR`
   message ("busy, try again in a minute") instead of failing the request.
 - Keyword search runs in Python over the relevant chunk set (the user's chunks, or the

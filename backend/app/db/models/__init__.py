@@ -7,6 +7,7 @@ from app.db.models.booking import (
     BookingStatus,
     ConfirmationRequest,
     ConfirmationStatus,
+    IdempotencyKey,
 )
 from app.db.models.chat import Conversation, Message, ToolExecution
 from app.db.models.document import (
@@ -36,6 +37,7 @@ __all__ = [
     "DocumentStatus",
     "DocumentType",
     "ExtractedEntity",
+    "IdempotencyKey",
     "JobStatus",
     "KnowledgeChunk",
     "KnowledgeDocument",

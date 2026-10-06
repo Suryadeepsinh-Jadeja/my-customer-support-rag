@@ -19,14 +19,14 @@ start phase N."*
 | 4 | Gemini assistant, structured output, conversation memory, supervisor agent | Done | |
 | 5 | Flight, hotel, car, excursion and document agents | Done | |
 | 6 | Mock booking providers, search/book/cancel/modify, confirmations | Done | |
-| 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | **Next** | |
-| 8 | Chat UI, booking UI, cards, confirmation dialogs | Planned | |
+| 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | Done | |
+| 8 | Chat UI, booking UI, cards, confirmation dialogs | **Next** | |
 | 9 | Security hardening, Redis rate limiting, admin panel | Planned | |
 | 10 | Integration + E2E tests, CI/CD completion | Planned | |
 | 11 | Deployment, monitoring, final docs, retire the old app | Planned | |
 
 - **Repository:** https://github.com/Suryadeepsinh-Jadeja/my-customer-support-rag, branch
-  `rebuild`, one commit per phase. Commit messages end with a `Co-Authored-By` line.
+  `rebuild`, one commit per phase. No `Co-Authored-By` or other AI attribution lines in commits.
 - **The original product spec** (89 sections) was pasted in the first chat. Section numbers
   below (§) refer to it. Its key requirements are restated in each phase, so you don't need
   the spec itself.
@@ -46,6 +46,9 @@ start phase N."*
 2. Build phase by phase, and verify each one: tests, lint, types, plus a real run in the
    browser and/or a live Gemini check where relevant.
 3. Commit or push only when asked. Work on `rebuild`.
+4. Keep the **README** a complete setup guide: whenever a phase adds a setting, key,
+   service, command or setup step, update README.md in the same phase so anyone can set
+   the project up from scratch. Feature and status details go in PLATFORM.md.
 
 ---
 
@@ -74,6 +77,9 @@ npm run lint && npm run typecheck && npm run build
 - **`backend/.env`** (git-ignored) holds `APP_ENV=development`, an absolute SQLite
   `DATABASE_URL`, `JWT_SECRET` and `STORAGE_ENCRYPTION_KEY`. It has **no Gemini key**, so
   locally documents use rule-based extraction and search is keyword-only.
+- **Duffel test key:** in `backend/.env` (`FLIGHT_PROVIDER=duffel`,
+  `DUFFEL_API_KEY=duffel_test_...`), so the local dev app books flights in Duffel's
+  sandbox. Real orders need a passport upload and a profile phone number.
 - **Gemini key:** the user's key is in the old app's root `.env` (`GEMINI_API_KEY`,
   model `gemini-3.5-flash-lite`). For one-off live checks, export it for that command only:
   `export GEMINI_API_KEY="$(grep '^GEMINI_API_KEY=' ../.env | cut -d= -f2- | tr -d '\r"')"`.
@@ -99,7 +105,7 @@ backend/
                               ProcessingJob), rag.py (DocumentChunk, KnowledgeDocument,
                               KnowledgeChunk, Embedding type), chat.py (Conversation,
                               Message, ToolExecution), booking.py (Booking,
-                              ConfirmationRequest)
+                              ConfirmationRequest, IdempotencyKey)
   app/agents/                 tools.py (@tool registry, ToolContext, execute()),
                               prompts.py (SPECIALISTS: focus, instructions, tools),
                               document_checks.py (cross-document conflict checks),
@@ -109,16 +115,18 @@ backend/
   app/api/routes/             auth, users, documents, search, chat (+ /chat/confirm),
                               bookings, health
   app/providers/              base.py (BookingProvider, ProviderError), mock.py,
-                              get_provider(kind)
+                              duffel.py, get_provider(kind)
+  app/api/idempotency.py      idempotent(request, db, user, body, handler)
   app/services/               auth_service, audit_service.record(), document_service,
                               document_processor (pipeline), jobs (DB queue), storage
                               (encrypted local/S3), file_validation, malware, ocr,
                               text_extraction, extraction_service, llm_service,
                               chat_service (conversations, memory, one chat turn),
-                              booking_service (propose_*, confirm), booking_state
+                              booking_service (propose_*, confirm), booking_state,
+                              payment_service (mock test sessions)
   app/rag/                    chunking.py, retrieval.py (search_user_documents,
                               search_knowledge, query_vector), ingest.py
-  alembic/versions/           0001 users/audit, 0002 documents/jobs, 0003 rag, 0004 chat, 0005 bookings
+  alembic/versions/           0001 users/audit, 0002 documents/jobs, 0003 rag, 0004 chat, 0005 bookings, 0006 idempotency
   tests/                      conftest (SQLite via real migrations; env set there),
                               samples.py (generated PDF/DOCX/PNG/passport MRZ),
                               fake_llm.py (ScriptedLLM with call(), reply(), intent())
@@ -384,7 +392,30 @@ Tests are in `tests/test_bookings.py`; live results are in PLATFORM.md.
 
 ---
 
-## 8. Phase 7: real provider, revalidation, idempotency, payments (§24, §26, §61–62, rules 6, 8)
+## 8. Phase 7: real provider, revalidation, idempotency, payments (done)
+
+**As built:** as planned below, with these choices:
+- `provider.book(offer, travellers, contact)` takes traveller dicts
+  `{name, born_on, gender}` (from the passport) and `{email, phone}`. It returns
+  `{"reference", ...extra}`; the extras, such as Duffel's `order_id`, are kept in
+  `booking.details`.
+- Price revalidation happens in `BookingService._book` / `_modify`. A price change
+  marks the confirmation `expired` and returns a new one (`Outcome.cards`).
+- Idempotency stores successful responses only, so a failed request can be retried
+  with the same key. The key isn't passed on to Duffel (no documented support).
+- Duffel was verified in its sandbox (search, re-price, order, cancel, and the full
+  chat flow). Fixtures in `tests/fixtures/duffel/` are those recorded responses.
+  `get_offer` maps Duffel's `not_found` to `offer_not_found`.
+- A traveller the model names explicitly keeps the passport details when the name
+  matches the passport holder (`document_checks.name_tokens`).
+- The Duffel adapter strips spaces and punctuation from the phone number (E.164).
+- `tests/conftest.py` pins `FLIGHT_PROVIDER=mock`, so tests never call Duffel even when
+  `backend/.env` selects it.
+- Stripe was left out; `payment_service` is the place for it.
+
+Tests: `tests/test_duffel.py`, `tests/test_booking_safety.py`.
+
+### Original phase 7 plan (§24, §26, §61–62, rules 6, 8)
 
 - **Duffel adapter** (`app/providers/flights/duffel.py`) using `httpx`:
   - Offer requests → offers → `price` (re-fetch the offer) → order create.

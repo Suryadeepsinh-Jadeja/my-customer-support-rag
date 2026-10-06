@@ -12,6 +12,7 @@ from typing import Annotated, Any
 from pydantic import Field, StringConstraints
 from sqlalchemy import select
 
+from app.agents.document_checks import name_tokens
 from app.agents.tools import ToolArgs, ToolContext, tool
 from app.db.models import (
     BookingKind,
@@ -135,17 +136,26 @@ async def get_bookings(ctx: ToolContext, args: BookingsArgs) -> dict[str, Any]:
     return {"bookings": cards}
 
 
-async def _traveller(ctx: ToolContext) -> str | None:
-    """The passport name if there is one, else the profile name."""
-    name = (await ctx.session.execute(
-        select(ExtractedEntity.value)
+async def _traveller(ctx: ToolContext) -> dict[str, str] | None:
+    """The passport holder (name, date of birth, gender) if there is a passport, else the
+    profile name."""
+    rows = (await ctx.session.execute(
+        select(ExtractedEntity.document_id, ExtractedEntity.field, ExtractedEntity.value)
         .join(Document, Document.id == ExtractedEntity.document_id)
         .where(ExtractedEntity.user_id == ctx.user.id, Document.user_id == ctx.user.id,
                Document.document_type == DocumentType.PASSPORT,
-               ExtractedEntity.field == "full_name")
-        .order_by(Document.created_at.desc()).limit(1)
-    )).scalar_one_or_none()
-    return name or (ctx.user.profile.full_name if ctx.user.profile else None) or None
+               ExtractedEntity.field.in_(["full_name", "date_of_birth", "sex"]))
+        .order_by(Document.created_at.desc())
+    )).all()
+    if rows:
+        latest = rows[0].document_id
+        fields = {r.field: r.value for r in rows if r.document_id == latest}
+        if fields.get("full_name"):
+            sex = (fields.get("sex") or "").lower()[:1]
+            return {"name": fields["full_name"], "born_on": fields.get("date_of_birth"),
+                    "gender": sex if sex in {"m", "f"} else None}
+    name = ctx.user.profile.full_name if ctx.user.profile else ""
+    return {"name": name} if name else None
 
 
 def _pending(ctx: ToolContext, confirmation: ConfirmationRequest) -> dict[str, Any]:
@@ -165,9 +175,13 @@ class BookArgs(ToolArgs):
 
 def _register_book(kind: BookingKind) -> None:
     async def book(ctx: ToolContext, args: BookArgs) -> dict[str, Any]:
-        if not args.offer_id.startswith(f"{kind.value}|"):
-            raise ProviderError("offer_not_found", f"That isn't a {kind.value} offer.")
-        travellers = args.travellers or [n for n in [await _traveller(ctx)] if n]
+        default = await _traveller(ctx)
+        if args.travellers:
+            # A named traveller who is the passport holder keeps the passport details.
+            travellers = [default if default and name_tokens(n) == name_tokens(default["name"])
+                          else {"name": n} for n in args.travellers]
+        else:
+            travellers = [default] if default else []
         if not travellers:
             return {"error": "No traveller name is known. Ask the user for the full name "
                              "as shown in their passport."}

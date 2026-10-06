@@ -166,11 +166,12 @@ class MockProvider(BookingProvider):
             raise ProviderError("offer_not_found", "That offer no longer exists. Search again.")
         return GENERATORS[self.kind](params, int(parts[-1]))
 
-    async def book(self, offer: dict[str, Any], travellers: list[str]) -> str:
+    async def book(self, offer: dict[str, Any], travellers: list[dict[str, Any]],
+                   contact: dict[str, Any]) -> dict[str, Any]:
         if _day(offer["start_date"]) < date.today():
             raise ProviderError("offer_expired", "That date is in the past.")
-        return "MK" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
-                              for _ in range(6))
+        return {"reference": "MK" + "".join(secrets.choice("ABCDEFGHJKLMNPQRSTUVWXYZ23456789")
+                                            for _ in range(6))}
 
     async def refund_quote(self, details: dict[str, Any], amount: float) -> dict[str, Any]:
         rule = details.get("refund_rule", "none")

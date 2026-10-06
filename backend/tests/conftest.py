@@ -22,6 +22,8 @@ os.environ.update(
     STORAGE_LOCAL_PATH=str(Path(_tmp, "storage")),
     STORAGE_ENCRYPTION_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
     GEMINI_API_KEY="",
+    FLIGHT_PROVIDER="mock",  # never call Duffel from tests, whatever backend/.env says
+    DUFFEL_API_KEY="",
     DOCUMENT_AI_PROVIDER="rules",
     OCR_PROVIDER="none",
     MALWARE_SCANNER="none",

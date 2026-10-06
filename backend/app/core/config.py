@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3.5-flash"
     LLM_TIMEOUT_SECONDS: int = Field(default=60, ge=5)
 
+    # Booking providers. Hotels, cars and excursions always use the mock; flights can use
+    # Duffel (a duffel_test_ key gives Duffel's sandbox).
+    FLIGHT_PROVIDER: Literal["mock", "duffel"] = "mock"
+    DUFFEL_API_KEY: str = ""
+    DUFFEL_BASE_URL: str = "https://api.duffel.com"
+
     # Object storage for uploaded files. "local" writes under STORAGE_LOCAL_PATH;
     # "s3" uses any S3-compatible service (AWS S3, MinIO, R2, GCS interop).
     STORAGE_BACKEND: Literal["local", "s3"] = "local"

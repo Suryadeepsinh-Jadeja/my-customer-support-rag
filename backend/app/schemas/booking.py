@@ -29,7 +29,8 @@ class BookingOut(BaseModel):
     def from_booking(cls, b: Booking) -> "BookingOut":
         d = b.details or {}
         return cls(id=b.id, kind=b.kind, status=b.status, provider=b.provider,
-                   test_booking=b.provider == "mock", confirmation_number=b.provider_ref,
+                   test_booking=d.get("test_booking", b.provider == "mock"),
+                   confirmation_number=b.provider_ref,
                    title=d.get("title"), start_date=d.get("start_date"),
                    end_date=d.get("end_date"), total_amount=b.total_amount,
                    currency=b.currency, details=d, created_at=b.created_at,

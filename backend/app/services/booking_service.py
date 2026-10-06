@@ -30,7 +30,7 @@ from app.db.models import (
     User,
 )
 from app.providers import ProviderError, get_provider
-from app.services import audit_service
+from app.services import audit_service, payment_service
 from app.services.booking_state import ACTIVE, InvalidTransitionError, transition
 
 logger = logging.getLogger("travel.bookings")
@@ -64,11 +64,13 @@ def booking_card(b: Booking) -> dict[str, Any]:
     return {
         "type": "booking", "booking_id": str(b.id), "kind": b.kind.value,
         "status": b.status.value, "provider": b.provider,
-        "test_booking": b.provider == "mock", "confirmation_number": b.provider_ref,
+        "test_booking": d.get("test_booking", b.provider == "mock"),
+        "confirmation_number": b.provider_ref,
         "title": d.get("title"), "start_date": d.get("start_date"),
         "end_date": d.get("end_date"), "total_amount": b.total_amount,
         "currency": b.currency, "travellers": d.get("travellers", []),
         "refund": d.get("refund"),
+        "payment_status": (d.get("payment") or {}).get("status"),
     }
 
 
@@ -82,7 +84,18 @@ class Outcome:
     confirmation: ConfirmationRequest
     booking: Booking | None
     text: str
-    message_type: str  # BOOKING_CONFIRMATION | BOOKING_STATUS | ERROR
+    # BOOKING_CONFIRMATION | BOOKING_STATUS | ERROR, or CONFIRMATION_REQUEST when the
+    # price changed and the user has to confirm again
+    message_type: str
+    cards: list[dict[str, Any]]
+
+
+@dataclass
+class _Done:
+    booking: Booking | None
+    text: str
+    ok: bool
+    reconfirm: ConfirmationRequest | None = None
 
 
 class BookingService:
@@ -115,15 +128,21 @@ class BookingService:
 
     # ------------------------------------------------------------- proposals
 
-    async def propose_booking(self, kind: BookingKind, offer_id: str, travellers: list[str],
-                              conversation_id: uuid.UUID | None) -> ConfirmationRequest:
+    async def propose_booking(self, kind: BookingKind, offer_id: str,
+                              travellers: list[dict[str, Any]],
+                              conversation_id: uuid.UUID | None,
+                              previous_price: float | None = None) -> ConfirmationRequest:
+        """travellers: [{name, born_on?, gender?}]; only names are shown in the summary."""
         offer = await get_provider(kind.value).get_offer(offer_id)
         if date.fromisoformat(offer["start_date"]) < date.today():
             raise ProviderError("offer_expired", "That date is in the past.")
         summary = {"kind": kind.value, "title": offer["title"], "price": offer["price"],
                    "currency": offer["currency"], "start_date": offer["start_date"],
-                   "end_date": offer["end_date"], "travellers": travellers,
+                   "end_date": offer["end_date"],
+                   "travellers": [t["name"] for t in travellers],
                    "test_booking": offer.get("test_booking", False), "offer": offer}
+        if previous_price is not None:
+            summary["previous_price"] = previous_price
         params = {"kind": kind.value, "offer_id": offer_id, "travellers": travellers,
                   "price": offer["price"]}
         return await self._new_confirmation("book", params, summary, conversation_id)
@@ -216,57 +235,86 @@ class BookingService:
             raise ConfirmationError("This request was already handled.")
         c.status = new_status
 
-        booking: Booking | None = None
         if not approved:
-            text, ok = "Okay, I haven't changed anything.", True
+            done = _Done(None, "Okay, I haven't changed anything.", True)
             await audit_service.record(self.session, f"booking.{c.action}_declined",
                                        user_id=self.user.id, resource_type="confirmation",
                                        resource_id=str(c.id))
         elif c.action == "book":
-            booking, text, ok = await self._book(c)
+            done = await self._book(c)
         elif c.action == "cancel":
-            booking, text, ok = await self._cancel(uuid.UUID(c.params["booking_id"]))
+            done = await self._cancel(uuid.UUID(c.params["booking_id"]))
         else:
-            booking, text, ok = await self._modify(uuid.UUID(c.params["booking_id"]),
-                                                   c.params["changes"])
+            done = await self._modify(c)
 
-        message_type = ("ERROR" if not ok else "BOOKING_CONFIRMATION"
-                        if c.action == "book" and approved else "BOOKING_STATUS")
+        if done.reconfirm is not None:
+            message_type, cards = "CONFIRMATION_REQUEST", [confirmation_card(done.reconfirm)]
+        else:
+            message_type = ("ERROR" if not done.ok else "BOOKING_CONFIRMATION"
+                            if c.action == "book" and approved else "BOOKING_STATUS")
+            cards = [booking_card(done.booking)] if done.booking else []
         if c.conversation_id:  # the outcome shows up in the conversation history too
             self.session.add(Message(
-                conversation_id=c.conversation_id, role="assistant", content=text,
-                payload={"type": message_type, "sources": [],
-                         "cards": [booking_card(booking)] if booking else [],
+                conversation_id=c.conversation_id, role="assistant", content=done.text,
+                payload={"type": message_type, "sources": [], "cards": cards,
                          "agent": "booking"}))
         await self.session.commit()
-        return Outcome(c, booking, text, message_type)
+        return Outcome(c, done.booking, done.text, message_type, cards)
 
-    async def _book(self, c: ConfirmationRequest) -> tuple[Booking, str, bool]:
+    async def _supersede(self, c: ConfirmationRequest, old: float, new: float,
+                         currency: str, reconfirm: ConfirmationRequest) -> "_Done":
+        """The price moved since the user saw it: book nothing and ask again (§61)."""
+        c.status = ConfirmationStatus.EXPIRED
+        await audit_service.record(self.session, f"booking.{c.action}_price_changed",
+                                   user_id=self.user.id, resource_type="confirmation",
+                                   resource_id=str(c.id))
+        return _Done(None, f"The price changed from {old:.2f} to {new:.2f} {currency}. "
+                           "Nothing was booked or charged. Confirm again to continue at the "
+                           "new price.", True, reconfirm)
+
+    async def _book(self, c: ConfirmationRequest) -> "_Done":
         kind = BookingKind(c.params["kind"])
-        offer = c.summary["offer"]
         provider = get_provider(kind.value)
+        try:
+            offer = await provider.get_offer(c.params["offer_id"])  # price revalidation
+        except ProviderError as exc:
+            return _Done(None, f"{exc.message} Nothing was booked.", False)
+        if offer["price"] != c.params["price"]:
+            reconfirm = await self.propose_booking(kind, c.params["offer_id"],
+                                                   c.params["travellers"], c.conversation_id,
+                                                   previous_price=c.params["price"])
+            return await self._supersede(c, c.params["price"], offer["price"],
+                                         offer["currency"], reconfirm)
+
+        names = [t["name"] for t in c.params["travellers"]]
         booking = Booking(
             user_id=self.user.id, kind=kind, provider=provider.name,
             status=BookingStatus.BOOKING, travel_date=date.fromisoformat(offer["start_date"]),
-            total_amount=c.params["price"], currency=offer["currency"],
-            details=offer | {"travellers": c.params["travellers"]})
+            total_amount=offer["price"], currency=offer["currency"],
+            details=offer | {"travellers": names})
         self.session.add(booking)
         await self.session.flush()
+        contact = {"email": self.user.email,
+                   "phone": self.user.profile.phone if self.user.profile else None}
         try:
-            current = await provider.get_offer(c.params["offer_id"])
-            booking.provider_ref = await provider.book(current, c.params["travellers"])
+            result = await provider.book(offer, c.params["travellers"], contact)
         except ProviderError as exc:
             transition(booking, BookingStatus.FAILED)
             booking.error_code = exc.code
             await self._audit("booking.create", booking, "failure", exc.code)
-            return booking, f"The booking failed: {exc.message} Nothing was charged.", False
+            return _Done(booking, f"The booking failed: {exc.message} Nothing was charged.",
+                         False)
+        booking.provider_ref = result["reference"]
         transition(booking, BookingStatus.CONFIRMED)
+        payment = await payment_service.create_payment_session(booking)
+        booking.details = booking.details | {k: v for k, v in result.items()
+                                             if k != "reference"} | {"payment": payment}
         await self._audit("booking.create", booking)
-        label = " (test booking)" if provider.name == "mock" else ""
-        return booking, (f"Booked{label}: {offer['title']} on {offer['start_date']}. "
-                         f"Confirmation number {booking.provider_ref}."), True
+        label = " (test booking)" if offer.get("test_booking") else ""
+        return _Done(booking, f"Booked{label}: {offer['title']} on {offer['start_date']}. "
+                              f"Confirmation number {booking.provider_ref}.", True)
 
-    async def _cancel(self, booking_id: uuid.UUID) -> tuple[Booking, str, bool]:
+    async def _cancel(self, booking_id: uuid.UUID) -> "_Done":
         booking = await self._active(booking_id)
         previous = booking.status
         transition(booking, BookingStatus.CANCELLATION_REQUESTED)
@@ -277,36 +325,52 @@ class BookingService:
         except ProviderError as exc:
             transition(booking, previous)
             await self._audit("booking.cancel", booking, "failure", exc.code)
-            return booking, f"The cancellation failed: {exc.message} The booking is unchanged.", \
-                False
+            return _Done(booking, f"The cancellation failed: {exc.message} The booking is "
+                                  "unchanged.", False)
         transition(booking, BookingStatus.CANCELLED)
         booking.details = booking.details | {"refund": refund}
         await self._audit("booking.cancel", booking)
-        return booking, (f"Cancelled {booking.details.get('title')}. Refund: "
-                         f"{refund['refund_amount']:.2f} {refund['currency']}."), True
+        return _Done(booking, f"Cancelled {booking.details.get('title')}. Refund: "
+                              f"{refund['refund_amount']:.2f} {refund['currency']}.", True)
 
-    async def _modify(self, booking_id: uuid.UUID,
-                      changes: dict[str, str]) -> tuple[Booking, str, bool]:
-        booking = await self._active(booking_id)
+    async def _modify(self, c: ConfirmationRequest) -> "_Done":
+        booking = await self._active(uuid.UUID(c.params["booking_id"]))
+        changes = c.params["changes"]
+        provider = get_provider(booking.kind.value)
+        quoted = c.summary["new"]["price"]
+        try:
+            current = await provider.modify_quote(booking.details, changes)
+        except ProviderError as exc:
+            return _Done(booking, f"The change failed: {exc.message} The booking is "
+                                  "unchanged.", False)
+        if current["price"] != quoted:
+            start_key, end_key = DATE_CHANGES[booking.kind]
+            reconfirm = await self.propose_modify(
+                booking.id, date.fromisoformat(changes[start_key]),
+                date.fromisoformat(changes[end_key]) if end_key else None, c.conversation_id)
+            return await self._supersede(c, quoted, current["price"], current["currency"],
+                                         reconfirm)
+
         previous = booking.status
         transition(booking, BookingStatus.MODIFICATION_REQUESTED)
-        provider = get_provider(booking.kind.value)
         try:
             new = await provider.modify(booking.provider_ref or "", booking.details, changes)
         except ProviderError as exc:
             transition(booking, previous)
             await self._audit("booking.modify", booking, "failure", exc.code)
-            return booking, f"The change failed: {exc.message} The booking is unchanged.", False
+            return _Done(booking, f"The change failed: {exc.message} The booking is "
+                                  "unchanged.", False)
         transition(booking, BookingStatus.MODIFIED)
         booking.details = new | {
             "travellers": booking.details.get("travellers", []),
+            "payment": booking.details.get("payment"),
             "modified_from": {"start_date": booking.details.get("start_date"),
                               "price": booking.total_amount}}
         booking.total_amount = new["price"]
         booking.travel_date = date.fromisoformat(new["start_date"])
         await self._audit("booking.modify", booking)
-        return booking, (f"Changed {new['title']} to {new['start_date']}. New total "
-                         f"{new['price']:.2f} {new['currency']}."), True
+        return _Done(booking, f"Changed {new['title']} to {new['start_date']}. New total "
+                              f"{new['price']:.2f} {new['currency']}.", True)
 
     async def _audit(self, action: str, booking: Booking, status: str = "success",
                      error: str | None = None) -> None:

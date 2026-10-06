@@ -9,10 +9,22 @@ import enum
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import JSON, Date, DateTime, ForeignKey, Index, Numeric, String, Uuid
+from sqlalchemy import (
+    JSON,
+    Date,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+    Uuid,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
-from app.db.base import Base, Timestamps, UUIDPk, str_enum
+from app.db.base import Base, Timestamps, UUIDPk, str_enum, utcnow
 
 
 class BookingKind(enum.StrEnum):
@@ -81,3 +93,22 @@ class ConfirmationRequest(UUIDPk, Timestamps, Base):
         str_enum(ConfirmationStatus, "confirmation_status"), default=ConfirmationStatus.PENDING
     )
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class IdempotencyKey(Base):
+    """The stored response to a booking request sent with an Idempotency-Key header, so a
+    retried request returns the same result instead of acting twice."""
+
+    __tablename__ = "idempotency_keys"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_idempotency_keys_user_key"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid, ForeignKey("users.id", ondelete="CASCADE")
+    )
+    key: Mapped[str] = mapped_column(String(100))
+    request_hash: Mapped[str] = mapped_column(String(64))
+    response: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, server_default=func.now()
+    )

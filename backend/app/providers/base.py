@@ -22,8 +22,10 @@ class BookingProvider:
         """The offer as currently priced. Raises ProviderError("offer_not_found")."""
         raise NotImplementedError
 
-    async def book(self, offer: dict[str, Any], travellers: list[str]) -> str:
-        """Book the offer; returns the provider's confirmation reference."""
+    async def book(self, offer: dict[str, Any], travellers: list[dict[str, Any]],
+                   contact: dict[str, Any]) -> dict[str, Any]:
+        """Book the offer. travellers: [{name, born_on?, gender?}]; contact: {email, phone}.
+        Returns {"reference": confirmation number, ...extra details to keep}."""
         raise NotImplementedError
 
     async def refund_quote(self, details: dict[str, Any], amount: float) -> dict[str, Any]:

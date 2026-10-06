@@ -225,7 +225,7 @@ async def test_provider_failure_marks_the_booking_failed(client, user_token, llm
                                                          monkeypatch):
     _, card = await search_and_propose(client, user_token, llm)
 
-    async def refuse(self, offer, travellers):
+    async def refuse(self, offer, travellers, contact):
         raise ProviderError("sold_out", "The flight is sold out.")
 
     monkeypatch.setattr(MockProvider, "book", refuse)

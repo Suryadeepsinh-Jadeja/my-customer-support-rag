@@ -45,7 +45,7 @@ def _date(value: str | None) -> date | None:
         return None
 
 
-def _name_tokens(name: str) -> set[str]:
+def name_tokens(name: str) -> set[str]:
     return set(re.findall(r"[A-Z]+", name.upper())) - {"MR", "MRS", "MS", "MISS", "DR"}
 
 
@@ -92,7 +92,7 @@ def check(docs: list[DocFields], today: date) -> list[Issue]:
         passenger = doc.first("passenger_name") or ""
         for passport in passports:
             holder = passport.first("full_name")
-            if holder and _name_tokens(passenger) != _name_tokens(holder):
+            if holder and name_tokens(passenger) != name_tokens(holder):
                 issues.append(Issue(
                     "name_mismatch", "warning",
                     f"The passenger name on {doc.filename} ({passenger}) doesn't exactly match "
