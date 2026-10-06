@@ -1,7 +1,8 @@
+import enum
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, MetaData, Uuid, func
+from sqlalchemy import DateTime, Enum, MetaData, Uuid, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 # Deterministic constraint names so Alembic migrations are stable across databases.
@@ -34,3 +35,10 @@ class Timestamps:
         DateTime(timezone=True), default=utcnow, onupdate=utcnow,
         server_default=func.now(), nullable=False,
     )
+
+
+def str_enum(cls: type[enum.Enum], name: str) -> Enum:
+    """Enum column stored as a plain string (no native DB enum), so adding values needs
+    no type migration."""
+    return Enum(cls, name=name, native_enum=False, length=32,
+                values_callable=lambda e: [m.value for m in e])

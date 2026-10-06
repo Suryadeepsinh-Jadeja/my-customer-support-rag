@@ -32,6 +32,24 @@ class InvalidRequestError(AppError):
     message = "Some of the information provided is invalid."
 
 
+class PayloadTooLargeError(AppError):
+    status_code = 413
+    code = "file_too_large"
+    message = "That file is too large."
+
+
+class UnsupportedFileError(AppError):
+    status_code = 415
+    code = "unsupported_file"
+    message = "That file type isn't supported. Upload a PDF, Word document, text file, PNG or JPEG."
+
+
+class ServiceUnavailableError(AppError):
+    status_code = 503
+    code = "service_unavailable"
+    message = "The service is temporarily unavailable. Please try again shortly."
+
+
 class InvalidCredentialsError(AppError):
     status_code = 401
     code = "invalid_credentials"

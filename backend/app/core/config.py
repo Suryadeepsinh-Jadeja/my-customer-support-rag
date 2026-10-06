@@ -41,9 +41,45 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "text"] | None = None
 
-    # Used from phase 4 onwards; reported by /ready.
+    # Google Gemini
     GEMINI_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.5-flash"
+    LLM_TIMEOUT_SECONDS: int = Field(default=60, ge=5)
+
+    # Object storage for uploaded files. "local" writes under STORAGE_LOCAL_PATH;
+    # "s3" uses any S3-compatible service (AWS S3, MinIO, R2, GCS interop).
+    STORAGE_BACKEND: Literal["local", "s3"] = "local"
+    STORAGE_LOCAL_PATH: Path = BACKEND_DIR / "storage"
+    OBJECT_STORAGE_ENDPOINT: str = ""
+    OBJECT_STORAGE_REGION: str = "us-east-1"
+    OBJECT_STORAGE_ACCESS_KEY: str = ""
+    OBJECT_STORAGE_SECRET_KEY: str = ""
+    OBJECT_STORAGE_BUCKET: str = "travel-documents"
+    # Base64 of 32 random bytes; files are AES-256-GCM encrypted before they reach storage.
+    # Required in production. Generate with:
+    #   python -c "import os,base64;print(base64.b64encode(os.urandom(32)).decode())"
+    STORAGE_ENCRYPTION_KEY: str = ""
+
+    # Uploads
+    MAX_UPLOAD_MB: int = Field(default=15, ge=1, le=100)
+    MAX_PDF_PAGES: int = Field(default=50, ge=1)
+    MAX_DOCUMENTS_PER_USER: int = Field(default=200, ge=1)
+    UPLOAD_RATE_LIMIT_PER_HOUR: int = Field(default=30, ge=1)
+
+    # Malware scanning: "none" (development) or "clamav" (clamd over TCP).
+    MALWARE_SCANNER: Literal["none", "clamav"] = "none"
+    CLAMAV_HOST: str = "localhost"
+    CLAMAV_PORT: int = 3310
+
+    # OCR for scanned PDFs and images. "auto": Tesseract if installed, else Gemini vision.
+    OCR_PROVIDER: Literal["auto", "tesseract", "gemini", "none"] = "auto"
+    # Classification + field extraction. "auto": Gemini if a key is set, else rules.
+    DOCUMENT_AI_PROVIDER: Literal["auto", "gemini", "rules"] = "auto"
+
+    # Background jobs. "inline": the API process runs them (development);
+    # "external": a separate `python -m app.worker` process does (production).
+    WORKER_MODE: Literal["inline", "external"] = "inline"
+    WORKER_POLL_SECONDS: float = Field(default=2.0, gt=0)
 
     @model_validator(mode="after")
     def _check_secrets(self) -> "Settings":
@@ -54,7 +90,13 @@ class Settings(BaseSettings):
             self.JWT_SECRET = secrets.token_urlsafe(48)
         elif self.APP_ENV == "production" and len(self.JWT_SECRET) < 32:
             raise ValueError("JWT_SECRET must be at least 32 characters in production")
+        if self.APP_ENV == "production" and not self.STORAGE_ENCRYPTION_KEY:
+            raise ValueError("STORAGE_ENCRYPTION_KEY must be set in production")
         return self
+
+    @property
+    def max_upload_bytes(self) -> int:
+        return self.MAX_UPLOAD_MB * 1024 * 1024
 
     @property
     def is_production(self) -> bool:

@@ -54,6 +54,10 @@ def test_production_requires_strong_jwt_secret(monkeypatch):
     with pytest.raises(ValueError, match="32 characters"):
         Settings()
     monkeypatch.setenv("JWT_SECRET", "x" * 40)
+    monkeypatch.setenv("STORAGE_ENCRYPTION_KEY", "")
+    with pytest.raises(ValueError, match="STORAGE_ENCRYPTION_KEY"):
+        Settings()
+    monkeypatch.setenv("STORAGE_ENCRYPTION_KEY", "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
     settings = Settings()
     assert settings.cookie_secure is True
     assert settings.log_format == "json"

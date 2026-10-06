@@ -2,10 +2,10 @@ import enum
 import uuid
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.db.base import Base, Timestamps, UUIDPk
+from app.db.base import Base, Timestamps, UUIDPk, str_enum
 
 
 class Role(enum.StrEnum):
@@ -20,18 +20,12 @@ class CabinClass(enum.StrEnum):
     FIRST = "first"
 
 
-def _enum(cls: type[enum.Enum], name: str) -> Enum:
-    # Stored as plain strings (no native DB enum) so adding values needs no type migration.
-    return Enum(cls, name=name, native_enum=False, length=32,
-                values_callable=lambda e: [m.value for m in e])
-
-
 class User(UUIDPk, Timestamps, Base):
     __tablename__ = "users"
 
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
-    role: Mapped[Role] = mapped_column(_enum(Role, "user_role"), default=Role.USER)
+    role: Mapped[Role] = mapped_column(str_enum(Role, "user_role"), default=Role.USER)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     # Bumped to invalidate every issued access token (sign out everywhere, password change).
     token_version: Mapped[int] = mapped_column(Integer, default=0)
@@ -69,7 +63,7 @@ class TravelPreference(Timestamps, Base):
     )
     preferred_airports: Mapped[list[str]] = mapped_column(JSON, default=list)
     preferred_airlines: Mapped[list[str]] = mapped_column(JSON, default=list)
-    preferred_cabin: Mapped[CabinClass | None] = mapped_column(_enum(CabinClass, "cabin_class"))
+    preferred_cabin: Mapped[CabinClass | None] = mapped_column(str_enum(CabinClass, "cabin_class"))
     seat_preference: Mapped[str | None] = mapped_column(String(32))
     meal_preference: Mapped[str | None] = mapped_column(String(64))
     # [{"airline": "LX", "number": "..."}]; numbers are masked whenever shown or logged.

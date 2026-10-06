@@ -175,3 +175,4 @@ customer_support_chat/data/travel2.sqlite*
 !frontend/lib/
 backend/.venv/
 backend/*.db
+backend/storage/

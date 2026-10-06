@@ -8,6 +8,9 @@ from sqlalchemy import text
 
 from app.core.config import get_settings
 from app.db.database import get_engine
+from app.services.malware import get_scanner
+from app.services.ocr import get_ocr
+from app.services.storage import get_storage
 
 router = APIRouter(tags=["health"])
 logger = logging.getLogger("travel.health")
@@ -36,9 +39,18 @@ async def ready():
         logger.warning("Readiness: database unreachable (%s)", type(exc).__name__)
         checks["database"] = {"ok": False, "backend": settings.database_backend}
 
-    # Optional until the assistant is enabled (phase 4); reported, but not required.
-    checks["llm"] = {"ok": True, "configured": bool(settings.GEMINI_API_KEY),
-                     "required": False}
+    checks["object_storage"] = {
+        "ok": await get_storage().check(),
+        "backend": settings.STORAGE_BACKEND,
+        "encrypted": bool(settings.STORAGE_ENCRYPTION_KEY),
+    }
+
+    # Reported for operators; documents still process (with reduced capability) without them.
+    ocr = get_ocr()
+    checks["ocr"] = {"ok": True, "provider": ocr.name if ocr else "unavailable"}
+    checks["malware_scanner"] = {"ok": True, "provider": get_scanner().name}
+    checks["llm"] = {"ok": True, "configured": bool(settings.GEMINI_API_KEY)}
+    checks["worker"] = {"ok": True, "mode": settings.WORKER_MODE}
 
     ready_ = all(c["ok"] for c in checks.values())
     return JSONResponse(status_code=200 if ready_ else 503,

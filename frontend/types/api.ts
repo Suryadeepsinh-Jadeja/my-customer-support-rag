@@ -36,6 +36,50 @@ export type User = {
   preferences: Preferences;
 };
 
+export type DocumentStatus = "queued" | "processing" | "extracted" | "failed" | "rejected";
+
+export type DocumentType =
+  | "passport"
+  | "visa"
+  | "flight_ticket"
+  | "boarding_pass"
+  | "hotel_booking"
+  | "car_booking"
+  | "insurance"
+  | "itinerary"
+  | "identity_document"
+  | "other";
+
+export type TravelDocument = {
+  id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
+  status: DocumentStatus;
+  error_code: string | null;
+  error_message: string | null;
+  document_type: DocumentType | null;
+  type_confidence: number | null;
+  analysis_method: "gemini" | "rules" | null;
+  page_count: number | null;
+  ocr_used: boolean;
+  created_at: string;
+  steps: { uploaded: boolean; scanned: boolean; text_extracted: boolean; fields_extracted: boolean };
+};
+
+export type ExtractedField = {
+  field: string;
+  label: string;
+  value: string;
+  masked: boolean;
+  group: number;
+  page: number | null;
+  confidence: number | null;
+  method: "gemini" | "rules" | "mrz";
+};
+
+export type TravelDocumentDetail = TravelDocument & { fields: ExtractedField[] };
+
 export type AuthResponse = {
   user: User;
   access_token: string;

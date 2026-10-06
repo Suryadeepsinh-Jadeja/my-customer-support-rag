@@ -1,11 +1,11 @@
 import uuid
-from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
 from app.core.logging import mask
 from app.db.models import CabinClass, Role
+from app.schemas.common import UtcDatetime
 
 IataAirport = Annotated[str, StringConstraints(pattern=r"^[A-Za-z]{3}$", to_upper=True,
                                                strip_whitespace=True)]
@@ -97,7 +97,7 @@ class UserOut(BaseModel):
     id: uuid.UUID
     email: EmailStr
     role: Role
-    created_at: datetime
+    created_at: UtcDatetime
     profile: ProfileOut
     preferences: PreferencesOut
 
@@ -106,5 +106,5 @@ class AuthResponse(BaseModel):
     user: UserOut
     access_token: str
     token_type: Literal["bearer"] = "bearer"  # noqa: S105
-    expires_at: datetime
+    expires_at: UtcDatetime
     csrf_token: str

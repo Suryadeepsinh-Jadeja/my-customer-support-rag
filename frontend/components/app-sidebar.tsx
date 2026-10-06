@@ -1,6 +1,16 @@
 "use client";
 
-import { Home, LogOut, Menu, Plane, Settings, SlidersHorizontal, UserRound, X } from "lucide-react";
+import {
+  FileText,
+  Home,
+  LogOut,
+  Menu,
+  Plane,
+  Settings,
+  SlidersHorizontal,
+  UserRound,
+  X,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -11,9 +21,10 @@ import { useSignOut } from "@/hooks/use-current-user";
 import { cn } from "@/lib/utils";
 import type { User } from "@/types/api";
 
-// Conversations, Documents and Bookings join this list as their phases land.
+// Conversations and Bookings join this list as their phases land.
 const NAV = [
   { href: "/", label: "Home", icon: Home },
+  { href: "/documents", label: "Documents", icon: FileText },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/preferences", label: "Travel preferences", icon: SlidersHorizontal },
   { href: "/settings", label: "Settings", icon: Settings },

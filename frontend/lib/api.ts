@@ -24,6 +24,53 @@ function readCookie(name: string): string | undefined {
     ?.slice(name.length + 1);
 }
 
+function toApiError(status: number, data: unknown): ApiError {
+  const error = (data as ApiErrorBody | null)?.error;
+  return new ApiError(
+    status,
+    error?.code ?? "http_error",
+    error?.message ?? "Something went wrong. Please try again.",
+    error?.fields ?? [],
+  );
+}
+
+/**
+ * Upload a file as multipart/form-data, reporting progress (0-100).
+ * Uses XMLHttpRequest because fetch() has no upload progress events.
+ */
+export function uploadFile<T>(
+  path: string,
+  file: File,
+  onProgress?: (percent: number) => void,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api${path}`);
+    xhr.withCredentials = true;
+    xhr.setRequestHeader("Accept", "application/json");
+    const csrf = readCookie("csrf_token");
+    if (csrf) xhr.setRequestHeader("X-CSRF-Token", decodeURIComponent(csrf));
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress?.(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      let data: unknown = null;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        // non-JSON error page, handled below
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as T);
+      else reject(toApiError(xhr.status, data));
+    };
+    xhr.onerror = () =>
+      reject(new ApiError(0, "network_error", "The upload failed. Check your connection."));
+    const form = new FormData();
+    form.append("file", file);
+    xhr.send(form);
+  });
+}
+
 export async function api<T>(
   path: string,
   init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
@@ -52,14 +99,6 @@ export async function api<T>(
   if (response.status === 204) return undefined as T;
 
   const data = await response.json().catch(() => null);
-  if (!response.ok) {
-    const error = (data as ApiErrorBody | null)?.error;
-    throw new ApiError(
-      response.status,
-      error?.code ?? "http_error",
-      error?.message ?? "Something went wrong. Please try again.",
-      error?.fields ?? [],
-    );
-  }
+  if (!response.ok) throw toApiError(response.status, data);
   return data as T;
 }

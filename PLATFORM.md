@@ -9,9 +9,11 @@ agents, RAG pipeline and knowledge base are ported in during phases 3–5, after
 browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/ui)
               │  /api/* route handler forwards to the backend (same origin, httpOnly cookies)
               ▼
-            backend/ (FastAPI, SQLAlchemy 2 async, Alembic, Pydantic v2)
-              ▼
-            PostgreSQL 17 + pgvector
+            backend/ API (FastAPI, SQLAlchemy 2 async, Alembic, Pydantic v2)
+              │                         ▲ job queue (processing_jobs table)
+              ▼                         │
+            PostgreSQL 17 + pgvector ◄── worker (python -m app.worker)
+            S3 / MinIO (AES-256-GCM encrypted files)   ClamAV · Tesseract · Gemini
 ```
 
 ## Status
@@ -19,7 +21,7 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Architecture, database, authentication, Docker, basic frontend/backend, health checks | **Done** |
-| 2 | Document upload, object storage, text extraction, OCR, classification, structured extraction | Not started |
+| 2 | Document upload, object storage, text extraction, OCR, classification, structured extraction | **Done** |
 | 3 | Chunking, embeddings in pgvector, user-document RAG, knowledge-base RAG, hybrid retrieval | Not started |
 | 4 | Gemini service, structured output, conversation memory, supervisor agent | Not started |
 | 5 | Flight, hotel, car, excursion and document agents | Not started |
@@ -60,6 +62,54 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 - `proxy.ts` redirects signed-out visitors to sign-in (authorization itself is always
   enforced by the backend).
 
+### What phase 2 delivers
+
+**Upload and storage**
+- `POST /api/documents` (also `/api/documents/upload`): PDF, DOCX, TXT, PNG, JPEG. The type
+  is detected from the bytes, never the filename or the client's claim. Size limit enforced
+  before the body is parsed; per-user upload rate limit and document quota; duplicate
+  uploads refused; filenames sanitised.
+- Files are AES-256-GCM encrypted in the API process before they reach storage (local disk
+  in development, any S3-compatible store in production). Object keys contain no names or
+  PII, and the key is bound into the ciphertext.
+- Downloads are served with the detected content type and a sandbox CSP; every download
+  is audited.
+
+**Background pipeline** (`app/services/document_processor.py`, run by `python -m app.worker`
+or, in development, inside the API process)
+1. Malware scan (ClamAV over clamd's INSTREAM protocol; a no-op scanner in development).
+   Infected files are deleted and the document marked *rejected*.
+2. Text extraction per page: PyMuPDF for PDFs, python-docx, plain text. Pages without a
+   text layer, and images, go through OCR (Tesseract locally, or Gemini vision).
+3. Classification into passport, visa, flight_ticket, boarding_pass, hotel_booking,
+   car_booking, insurance, itinerary, identity_document or other, plus structured field
+   extraction. Gemini structured output when a key is set; otherwise built-in rules,
+   including a check-digit-verified passport MRZ parser. Gemini failures fall back to rules.
+4. Each value is stored as an `ExtractedEntity` with its document, page, confidence,
+   method (gemini / rules / mrz) and timestamp. Values are evidence, not verified truth.
+
+The job queue lives in PostgreSQL (atomic claims with `SKIP LOCKED`, retries with
+exponential backoff, recovery of jobs from crashed workers), so no extra infrastructure is
+needed yet.
+
+**Security**
+- Documents and fields are always queried with the authenticated user's ID; another user's
+  document is a 404, not a 403.
+- Document text goes to Gemini only inside a delimited data block, with instructions to
+  never follow text inside it, and the model can only answer through a fixed schema.
+  Fields not allowed for the detected type are discarded server-side, so planted text
+  can't create arbitrary data. (Live-tested with an injection attempt in a ticket.)
+- Identifiers (passport, visa, ID, policy and ticket numbers) and birth dates are masked in
+  API responses and the UI; the full values stay server-side for the assistant.
+- Deleting a document removes the stored file first, then the record, pages, fields and
+  jobs (foreign-key cascade) and writes an audit entry. If storage is unavailable nothing
+  is deleted and the user can retry, so no orphaned files.
+
+**Frontend:** a Documents page with drag-and-drop upload, per-file progress, live status
+(polls while anything is processing) and search, plus a detail page showing the
+processing checklist, extracted fields grouped per flight segment with page and confidence,
+"Open original", "Try again" for failures and delete with confirmation.
+
 **Already partly covering later phases:** auth rate limiting (in-memory, per process;
 Redis comes in phase 9), audit logging, request IDs, CI (`.github/workflows/platform-ci.yml`:
 lint, type check, tests on SQLite *and* PostgreSQL+pgvector, production build, Docker builds).
@@ -73,8 +123,10 @@ cp backend/.env.example backend/.env    # then set JWT_SECRET
 docker compose -f docker-compose.platform.yml up -d --build
 ```
 
-Frontend on http://localhost:3000, API docs on http://localhost:8000/docs. The backend
-container runs `alembic upgrade head` on start.
+Frontend on http://localhost:3000, API docs on http://localhost:8000/docs, MinIO console on
+http://localhost:9001. The backend container runs `alembic upgrade head` on start; the
+`worker` container processes uploaded documents. Add `--profile scan` (and
+`MALWARE_SCANNER=clamav`) to run ClamAV.
 
 Create an administrator:
 
@@ -93,7 +145,11 @@ pip install -e ".[dev]"
 cp .env.example .env     # point DATABASE_URL at PostgreSQL, or use the SQLite line for a quick start
 alembic upgrade head
 uvicorn app.main:app --reload --port 8000
+python -m app.worker        # only if WORKER_MODE=external
 ```
+
+For OCR of scans and photos install [Tesseract](https://github.com/tesseract-ocr/tesseract)
+or set `GEMINI_API_KEY` (Gemini vision is used when Tesseract is missing).
 
 Frontend (Node 24):
 
@@ -114,7 +170,7 @@ cd frontend && npm run lint && npm run typecheck && npm run build
 Backend tests use a temporary SQLite database built by the real migrations. Set
 `TEST_DATABASE_URL=postgresql+asyncpg://...` to run them against PostgreSQL (CI does both).
 
-## API (phase 1)
+## API
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
@@ -127,12 +183,25 @@ Backend tests use a temporary SQLite database built by the real migrations. Set
 | PUT | `/api/users/me/preferences` | user | Replace travel preferences |
 | POST | `/api/users/me/password` | user | Change password (signs out other devices) |
 | GET | `/health`, `/api/health` | – | Liveness |
-| GET | `/ready` | – | Readiness (database, pgvector, configuration) |
+| POST | `/api/documents` | user | Upload a document (202; processed in the background) |
+| GET | `/api/documents` | user | List documents (`q`, `status`, `document_type` filters) |
+| GET | `/api/documents/{id}` | user | Status, processing steps and extracted fields (masked) |
+| GET | `/api/documents/{id}/file` | user | The original file |
+| DELETE | `/api/documents/{id}` | user | Delete file, record and all extracted data |
+| POST | `/api/documents/{id}/reprocess` | user | Retry a failed document |
+| GET | `/ready` | – | Readiness (database, pgvector, storage, OCR, scanner, LLM, worker mode) |
 
-## Known limitations (phase 1)
+## Known limitations
 
 - Rate limits are per process. With several workers or instances the effective limit is
   multiplied until the Redis-backed limiter lands in phase 9.
 - There is no email verification or password reset yet (needs the notification service).
 - Docker images and the PostgreSQL path are exercised in CI, not on this development
-  machine (it has no Docker); local verification used SQLite.
+  machine (it has no Docker); local verification used SQLite and local encrypted storage.
+- The S3/MinIO adapter, ClamAV scanner and Tesseract engine have not been run locally
+  (no Docker or Tesseract here). The pipeline around them is tested with stand-ins, and
+  Gemini OCR + extraction were tested live.
+- Rule-based extraction (no Gemini key) is deliberately conservative: it reads labelled
+  fields and passport MRZs, and leaves anything else for the AI path.
+- Documents are not yet searchable by the assistant; chunking, embeddings and retrieval
+  arrive in phase 3.

@@ -17,6 +17,17 @@ os.environ.update(
     LOGIN_MAX_ATTEMPTS="3",
     AUTH_RATE_LIMIT_PER_MINUTE="1000",
     LOG_LEVEL="WARNING",
+    # Documents: encrypted local storage, no network services, jobs run by the tests.
+    STORAGE_BACKEND="local",
+    STORAGE_LOCAL_PATH=str(Path(_tmp, "storage")),
+    STORAGE_ENCRYPTION_KEY="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
+    GEMINI_API_KEY="",
+    DOCUMENT_AI_PROVIDER="rules",
+    OCR_PROVIDER="none",
+    MALWARE_SCANNER="none",
+    WORKER_MODE="external",
+    MAX_UPLOAD_MB="1",
+    UPLOAD_RATE_LIMIT_PER_HOUR="1000",
 )
 
 import pytest  # noqa: E402
