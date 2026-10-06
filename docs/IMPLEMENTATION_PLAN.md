@@ -17,8 +17,8 @@ start phase N."*
 | 2 | Upload, object storage, text extraction, OCR, classification, structured extraction | Done | `de06e62` |
 | 3 | Chunking, embeddings (pgvector), user-document RAG, knowledge-base RAG, hybrid search | Done | `bb2e01e` |
 | 4 | Gemini assistant, structured output, conversation memory, supervisor agent | Done | |
-| 5 | Flight, hotel, car, excursion and document agents | **Next** | |
-| 6 | Mock booking providers, search/book/cancel/modify, confirmations | Planned | |
+| 5 | Flight, hotel, car, excursion and document agents | Done | |
+| 6 | Mock booking providers, search/book/cancel/modify, confirmations | **Next** | |
 | 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | Planned | |
 | 8 | Chat UI, booking UI, cards, confirmation dialogs | Planned | |
 | 9 | Security hardening, Redis rate limiting, admin panel | Planned | |
@@ -100,7 +100,8 @@ backend/
                               KnowledgeChunk, Embedding type), chat.py (Conversation,
                               Message, ToolExecution)
   app/agents/                 tools.py (@tool registry, ToolContext, execute()),
-                              prompts.py (SPECIALISTS as data, system prompts),
+                              prompts.py (SPECIALISTS: focus, instructions, tools),
+                              document_checks.py (cross-document conflict checks),
                               supervisor.py (route() -> Intent, run_agent() tool loop)
   app/api/deps.py             get_current_user (Bearer or cookie + CSRF), require_admin
   app/api/routes/             auth, users, documents, search, chat, health
@@ -154,7 +155,7 @@ docker-compose.platform.yml   postgres(pgvector), minio, backend, worker, fronte
 - **Assistant tools:** add a function with `@tool(name, description, ArgsModel)` in
   `app/agents/tools.py` (args subclass `ToolArgs`, which forbids unknown keys), then list
   its name in the specialist's `tools` in `prompts.py`. Cite with `ctx.cite({...})`.
-- **Chat tests:** the `llm` fixture in `tests/test_chat.py` patches
+- **Chat tests:** the `llm` fixture in `tests/conftest.py` patches
   `chat_service.get_llm` with a `ScriptedLLM`. Script steps in call order: the supervisor's
   `intent(...)`, then `call("tool", **args)` / a reply string / a callable that asserts on
   what the model saw. Without a key, retrieval is keyword-only.
@@ -271,7 +272,15 @@ PLATFORM.md is updated.
 
 ---
 
-## 6. Phase 5: specialist agents (§10, §36)
+## 6. Phase 5: specialist agents (done)
+
+**As built:** as planned below. Tools added: `list_documents`, `check_travel_documents`.
+The refund question was routed to the policy specialist in the live check (it has
+`get_document_fields`, so the answer still used the ticket); revisit routing when the
+booking tools land in phase 6. Agent tests: `tests/test_agents.py`; conflict-check unit
+tests: `tests/test_document_checks.py`. Live results are in PLATFORM.md.
+
+### Original phase 5 plan (§10, §36)
 
 Mostly prompts and tool subsets on top of phase 4. Booking tools arrive in phase 6.
 

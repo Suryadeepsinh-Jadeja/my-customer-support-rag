@@ -92,3 +92,14 @@ async def user_token(client):
 
 def bearer(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def llm(monkeypatch):
+    """The assistant's LLM replaced by a ScriptedLLM (see tests/fake_llm.py)."""
+    from app.services import chat_service
+    from tests.fake_llm import ScriptedLLM
+
+    fake = ScriptedLLM()
+    monkeypatch.setattr(chat_service, "get_llm", lambda: fake)
+    return fake

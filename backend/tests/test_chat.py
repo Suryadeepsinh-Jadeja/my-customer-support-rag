@@ -4,25 +4,17 @@ import shutil
 import uuid
 from pathlib import Path
 
-import pytest
 from sqlalchemy import select
 
 from app.db.models import Conversation, Message, ToolExecution
 from app.rag.ingest import ingest
-from app.services import chat_service, jobs
+from app.services import jobs
 from app.services.llm_service import LLMRateLimitedError
 from tests import samples
 from tests.conftest import bearer, register
 from tests.fake_llm import ScriptedLLM, call, intent
 
 KB_DIR = Path(__file__).resolve().parents[2] / "knowledge_base"
-
-
-@pytest.fixture
-def llm(monkeypatch):
-    fake = ScriptedLLM()
-    monkeypatch.setattr(chat_service, "get_llm", lambda: fake)
-    return fake
 
 
 async def upload(client, token, filename, data, content_type="application/pdf"):

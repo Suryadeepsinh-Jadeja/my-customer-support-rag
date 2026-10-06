@@ -13,12 +13,15 @@ import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agents import document_checks
+from app.agents.document_checks import DocFields
 from app.core.logging import mask
 from app.db.models import Document, DocumentType, ExtractedEntity, ToolExecution, User
 from app.rag import retrieval
@@ -135,23 +138,20 @@ class FieldArgs(ToolArgs):
                     "check_in, confirmation_number")
 
 
-@tool("get_document_fields",
-      "Structured fields extracted from the user's documents (flight number, times, "
-      "seat, passport number and expiry, hotel dates, ...), grouped by document, with the "
-      "page each value was found on. Multi-flight tickets number their flights by `segment`.",
-      FieldArgs)
-async def get_document_fields(ctx: ToolContext, args: FieldArgs) -> dict[str, Any]:
+async def _load_fields(ctx: ToolContext, document_type: DocumentType | None = None,
+                       field: str | None = None) -> dict[uuid.UUID, dict[str, Any]]:
+    """The user's extracted fields grouped by document, newest document first."""
     query = (select(ExtractedEntity, Document.filename, Document.document_type)
              .join(Document, Document.id == ExtractedEntity.document_id)
              .where(ExtractedEntity.user_id == ctx.user.id, Document.user_id == ctx.user.id)
              .order_by(Document.created_at.desc(), ExtractedEntity.group_index,
                        ExtractedEntity.id))
-    if args.document_type:
-        query = query.where(Document.document_type == args.document_type)
-    if args.field:
+    if document_type:
+        query = query.where(Document.document_type == document_type)
+    if field:
         # Narrow to documents that have the field, but return all their fields so the
         # value comes with its context (which flight, which date).
-        name = args.field.strip().lower().replace(" ", "_")
+        name = field.strip().lower().replace(" ", "_")
         query = query.where(ExtractedEntity.document_id.in_(
             select(ExtractedEntity.document_id).where(ExtractedEntity.user_id == ctx.user.id,
                                                       ExtractedEntity.field == name)))
@@ -162,18 +162,32 @@ async def get_document_fields(ctx: ToolContext, args: FieldArgs) -> dict[str, An
         doc = documents.setdefault(e.document_id, {
             "document": row.filename,
             "document_type": row.document_type.value if row.document_type else None,
-            "fields": [], "_pages": set(),
+            "fields": [], "pages": set(),
         })
         doc["fields"].append({"field": e.field, "value": e.value, "segment": e.group_index + 1,
                               "page": e.page, "confidence": e.confidence})
         if e.page:
-            doc["_pages"].add(e.page)
+            doc["pages"].add(e.page)
+    return documents
 
+
+def _cite_document(ctx: ToolContext, document_id: uuid.UUID, doc: dict[str, Any]) -> None:
+    pages = sorted(doc["pages"])
+    ctx.cite({"type": "document", "title": doc["document"], "document_id": str(document_id),
+              "page": pages[0] if pages else None})
+
+
+@tool("get_document_fields",
+      "Structured fields extracted from the user's documents (flight number, times, "
+      "seat, passport number and expiry, hotel dates, ...), grouped by document, with the "
+      "page each value was found on. Multi-flight tickets number their flights by `segment`.",
+      FieldArgs)
+async def get_document_fields(ctx: ToolContext, args: FieldArgs) -> dict[str, Any]:
+    documents = await _load_fields(ctx, args.document_type, args.field)
     for document_id, doc in documents.items():
-        pages = sorted(doc.pop("_pages"))
-        ctx.cite({"type": "document", "title": doc["document"],
-                  "document_id": str(document_id), "page": pages[0] if pages else None})
-    return {"documents": list(documents.values())}
+        _cite_document(ctx, document_id, doc)
+    return {"documents": [{k: v for k, v in d.items() if k != "pages"}
+                          for d in documents.values()]}
 
 
 @tool("search_policies",
@@ -211,3 +225,42 @@ async def get_user_profile(ctx: ToolContext, args: ToolArgs) -> dict[str, Any]:
             "notes": prefs.notes,
         }
     return result
+
+
+@tool("list_documents",
+      "List the travel documents the user has uploaded: file name, detected type, "
+      "processing status and upload date.")
+async def list_documents(ctx: ToolContext, args: ToolArgs) -> dict[str, Any]:
+    rows = (await ctx.session.execute(
+        select(Document).where(Document.user_id == ctx.user.id)
+        .order_by(Document.created_at.desc()).limit(100)
+    )).scalars()
+    return {"documents": [
+        {"document": d.filename,
+         "document_type": d.document_type.value if d.document_type else None,
+         "status": d.status.value, "uploaded": d.created_at.date().isoformat(),
+         "pages": d.page_count}
+        for d in rows
+    ]}
+
+
+@tool("check_travel_documents",
+      "Check the user's documents against each other: passenger name vs passport name, "
+      "passport validity (expired, or under 6 months at a travel date), hotel dates that "
+      "don't match the flights, and two tickets departing on the same day.")
+async def check_travel_documents(ctx: ToolContext, args: ToolArgs) -> dict[str, Any]:
+    documents = await _load_fields(ctx)
+    docs = [DocFields(d["document"], d["document_type"],
+                      [(f["field"], f["value"], f["segment"]) for f in d["fields"]])
+            for d in documents.values()]
+    issues = document_checks.check(docs, date.today())
+    involved = {name for issue in issues for name in issue.documents}
+    for document_id, doc in documents.items():
+        if doc["document"] in involved:
+            _cite_document(ctx, document_id, doc)
+    return {
+        "documents_checked": [{"document": d.filename, "document_type": d.document_type}
+                              for d in docs],
+        "issues": [{"kind": i.kind, "severity": i.severity, "message": i.message}
+                   for i in issues],
+    }
