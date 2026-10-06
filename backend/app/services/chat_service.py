@@ -39,6 +39,18 @@ ERROR_TEXT = {
 }
 
 
+def message_type(ctx: ToolContext) -> str:
+    """The most specific message type for what the tools produced this turn."""
+    cards = {c["type"] for c in ctx.cards}
+    for card, kind in [("confirmation", "CONFIRMATION_REQUEST"), ("booking", "BOOKING_STATUS"),
+                       ("flight_offer", "FLIGHT_RESULTS"), ("hotel_offer", "HOTEL_RESULTS")]:
+        if card in cards:
+            return kind
+    if any(s["type"] == "document" for s in ctx.sources):
+        return "DOCUMENT_INFO"
+    return "TEXT"
+
+
 class ChatService:
     def __init__(self, session: AsyncSession, user: User):
         self.session = session
@@ -97,9 +109,8 @@ class ChatService:
             reply = await supervisor.run_agent(llm, ctx, agent, list(history),
                                                summary=conversation.summary, intent=intent)
             answer = reply.text
-            is_document = any(s["type"] == "document" for s in ctx.sources)
-            payload = {"type": "DOCUMENT_INFO" if is_document else "TEXT",
-                       "sources": ctx.sources, "cards": [], "agent": agent}
+            payload = {"type": message_type(ctx), "sources": ctx.sources,
+                       "cards": ctx.cards, "agent": agent}
             conversation.active_agent = agent
         except LLMError as exc:
             reason = ("not_configured" if isinstance(exc, LLMNotConfiguredError)

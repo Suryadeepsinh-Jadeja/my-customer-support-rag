@@ -40,7 +40,7 @@ async def test_flight_agent_explains_refunds_from_ticket_and_policy(client, user
     assert offered_tools(llm) == set(SPECIALISTS["flight"].tools)
     assert "check_travel_documents" in offered_tools(llm)
     system = llm.calls[1][1]["system"]
-    assert "Give a refund or fee amount only if the policy or ticket states it" in system
+    assert "use those amounts, never your own calculation" in system
     ticket, policy = results(llm)
     assert ticket["documents"][0]["document"] == "ticket.pdf"
     assert "Flight Cancellation and Refund Policy" in policies(policy)

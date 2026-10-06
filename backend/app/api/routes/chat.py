@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
+from app.api.routes.bookings import BOOKING_RATE_LIMIT_PER_MINUTE
 from app.core import rate_limit
 from app.db.database import get_db
 from app.db.models import User
+from app.schemas.booking import BookingOut, ConfirmRequest, ConfirmResponse
 from app.schemas.chat import (
     AssistantMessage,
     ChatRequest,
@@ -15,6 +17,7 @@ from app.schemas.chat import (
     ConversationOut,
     MessageOut,
 )
+from app.services.booking_service import BookingService, booking_card
 from app.services.chat_service import ChatService
 
 router = APIRouter(tags=["chat"])
@@ -35,6 +38,24 @@ async def chat(body: ChatRequest, user: User = Depends(get_current_user),
         conversation_id=conversation.id, agent=p["agent"],
         message=AssistantMessage(type=p["type"], text=message.content,
                                  sources=p["sources"], cards=p["cards"]),
+    )
+
+
+@router.post("/chat/confirm", response_model=ConfirmResponse,
+             summary="Approve or decline a booking, change or cancellation")
+async def confirm(body: ConfirmRequest, user: User = Depends(get_current_user),
+                  db: AsyncSession = Depends(get_db)):
+    """The only way a sensitive action runs. The request must belong to you, still be
+    pending and not have expired (10 minutes); each one can be used once."""
+    rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
+    outcome = await BookingService(db, user).confirm(body.confirmation_id, body.approved)
+    booking = outcome.booking
+    return ConfirmResponse(
+        confirmation_id=outcome.confirmation.id, status=outcome.confirmation.status.value,
+        message=AssistantMessage(type=outcome.message_type,  # type: ignore[arg-type]
+                                 text=outcome.text, sources=[],
+                                 cards=[booking_card(booking)] if booking else []),
+        booking=BookingOut.from_booking(booking) if booking else None,
     )
 
 

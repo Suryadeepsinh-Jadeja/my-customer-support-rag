@@ -10,6 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from app.agents import booking_tools  # noqa: F401 (registers the booking tools)
 from app.agents import tools as tool_registry
 from app.agents.prompts import SPECIALISTS, SUPERVISOR_PROMPT, agent_system_prompt
 from app.services.llm_service import (

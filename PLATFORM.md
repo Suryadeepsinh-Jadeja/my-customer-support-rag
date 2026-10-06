@@ -25,7 +25,7 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 | 3 | Chunking, embeddings in pgvector, user-document RAG, knowledge-base RAG, hybrid retrieval | **Done** |
 | 4 | Gemini service, structured output, conversation memory, supervisor agent | **Done** |
 | 5 | Flight, hotel, car, excursion and document agents | **Done** |
-| 6 | Mock booking providers; flight/hotel/car booking and cancellation | Not started |
+| 6 | Mock booking providers; flight/hotel/car booking and cancellation | **Done** |
 | 7 | Real provider adapter, price revalidation, confirmation tokens, idempotency, booking state machine | Not started |
 | 8 | Chat UI, documents UI, bookings UI, flight cards, confirmation dialogs | Not started |
 | 9 | Redis-backed rate limiting, PII protection, prompt-injection defences, admin panel | Partly (see below) |
@@ -211,6 +211,53 @@ Live check with real Gemini (ticket, specimen passport and hotel booking uploade
 | Do I need a visa for Switzerland? | document | Can't confirm visa rules; check the Swiss embassy, based on your nationality (Utopian, from your passport) |
 | Can I rent a car with my driving licence? | car | No rental booking found; licence held 1+ year, age 21+, credit card, per the car rental policy |
 
+### What phase 6 delivers
+
+- **Mock providers** (`app/providers/mock.py`): deterministic flights, hotels, cars and
+  excursions generated from the search parameters with a seeded RNG. What is offered
+  depends on the route or city, prices also on the date, so a date change keeps the same
+  flight or hotel. Offer ids encode the search, so offers resolve again without storage.
+  Everything is marked `provider="mock"` / `test_booking`, and refunds follow the fare
+  (Light none, Classic minus CHF 150, Flex full; refundable hotels, cars and excursions in full).
+- **Bookings** (`bookings` table, migration 0005): one table with `kind` and a `details`
+  JSON snapshot of the offer instead of a table per kind, since the UI and agents only need
+  the common columns. A **state machine** (`app/services/booking_state.py`) allows only
+  the listed transitions.
+- **Confirmation flow:** `book_flight` / `book_hotel` / `book_car` / `book_excursion`,
+  `modify_booking` and `cancel_booking` never act. They create a `ConfirmationRequest`
+  (action, params, params hash, summary, 10-minute expiry) and the chat returns
+  `CONFIRMATION_REQUEST` with a confirmation card. Only `POST /api/chat/confirm
+  {confirmation_id, approved}` executes it, after checking the owner (404 otherwise), that
+  it is still pending, not expired and its parameters unchanged. An atomic `UPDATE ...
+  WHERE status='pending'` makes each confirmation single-use. A typed "yes" doesn't
+  confirm anything.
+- **booking_service:** each action does the ownership and status checks, the provider
+  call, the database update and an audit entry in one transaction. A booking is only
+  CONFIRMED when the provider returned a reference; a provider error leaves it FAILED with
+  an honest message ("Nothing was charged"). Refunds and price changes come only from the
+  provider's quote. The outcome is also added to the conversation.
+- **Tools:** `search_flights` (cabin from preferences; preferred airlines ranked first),
+  `search_hotels`, `search_cars`, `search_excursions`, `get_bookings` and the six
+  confirmation tools above. The flight agent takes the origin from the profile's home or
+  preferred airports and the passenger from the passport or profile name, and only asks for
+  what is missing. Chat messages are typed `FLIGHT_RESULTS`, `HOTEL_RESULTS`,
+  `BOOKING_STATUS` or `CONFIRMATION_REQUEST` with the matching cards.
+- **API:** `GET /api/bookings` (`kind`, `status` filters), `GET /api/bookings/{id}`, and
+  `POST /api/bookings/{id}/cancel` and `.../modify {start_date, end_date?}`, which return a
+  confirmation to approve. Booking endpoints are limited to 20 per minute per user.
+
+Live check with real Gemini (§84 steps 7-8, home airport BOM in the profile):
+
+1. "Book my flight to London for October 20": the flight agent used BOM from the profile
+   without asking and listed 5 test offers (TK879 CHF 132.42 Light, LH834 CHF 229.67, ...).
+2. "Book the cheapest one please": a `CONFIRMATION_REQUEST` card for TK879, CHF 132.42,
+   traveller Asha Mehta; no booking existed yet.
+3. Confirm pressed: "Booked (test booking): Turkish Airlines TK879 BOM-LHR on 2026-10-20.
+   Confirmation number MKWDQUWU."; the booking shows in `GET /api/bookings` as confirmed.
+4. "Cancel my flight": a card with the provider's refund quote (Economy Light: CHF 0.00).
+5. Confirm pressed: "Cancelled ... Refund: 0.00 CHF"; status cancelled. Audit log:
+   `booking.book_requested`, `booking.create`, `booking.cancel_requested`, `booking.cancel`.
+
 **Already partly covering later phases:** auth rate limiting (in-memory, per process;
 Redis comes in phase 9), audit logging, request IDs, CI (`.github/workflows/platform-ci.yml`:
 lint, type check, tests on SQLite *and* PostgreSQL+pgvector, production build, Docker builds).
@@ -295,6 +342,11 @@ Backend tests use a temporary SQLite database built by the real migrations. Set
 | GET | `/api/conversations` | user | Your conversations, most recent first |
 | GET | `/api/conversations/{id}` | user | A conversation with its messages |
 | DELETE | `/api/conversations/{id}` | user | Delete a conversation |
+| POST | `/api/chat/confirm` | user | Approve or decline a booking, change or cancellation |
+| GET | `/api/bookings` | user | Your bookings (`kind`, `status` filters) |
+| GET | `/api/bookings/{id}` | user | One booking |
+| POST | `/api/bookings/{id}/cancel` | user | Request a cancellation (returns a confirmation) |
+| POST | `/api/bookings/{id}/modify` | user | Request a date change (returns a confirmation) |
 | GET | `/ready` | – | Readiness (database, pgvector, storage, OCR, scanner, LLM, worker mode) |
 
 ## Known limitations
@@ -315,6 +367,9 @@ Backend tests use a temporary SQLite database built by the real migrations. Set
 - Sources list every document or policy section a tool returned during the turn, not only
   the ones the final answer relied on, so they can over-cite (e.g. a ticket listed when
   the answer is "no hotel booking found").
+- Bookings use the mock provider only. The offer is re-fetched when the user confirms, but
+  the price isn't compared yet (price revalidation, idempotency keys and payments come in
+  phase 7). Mock flight durations are random, not based on real routes.
 - Gemini's free tier rate-limits quickly; the assistant then replies with an `ERROR`
   message ("busy, try again in a minute") instead of failing the request.
 - Keyword search runs in Python over the relevant chunk set (the user's chunks, or the

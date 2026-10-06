@@ -18,8 +18,8 @@ start phase N."*
 | 3 | Chunking, embeddings (pgvector), user-document RAG, knowledge-base RAG, hybrid search | Done | `bb2e01e` |
 | 4 | Gemini assistant, structured output, conversation memory, supervisor agent | Done | |
 | 5 | Flight, hotel, car, excursion and document agents | Done | |
-| 6 | Mock booking providers, search/book/cancel/modify, confirmations | **Next** | |
-| 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | Planned | |
+| 6 | Mock booking providers, search/book/cancel/modify, confirmations | Done | |
+| 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | **Next** | |
 | 8 | Chat UI, booking UI, cards, confirmation dialogs | Planned | |
 | 9 | Security hardening, Redis rate limiting, admin panel | Planned | |
 | 10 | Integration + E2E tests, CI/CD completion | Planned | |
@@ -98,21 +98,27 @@ backend/
                               document.py (Document, DocumentPage, ExtractedEntity,
                               ProcessingJob), rag.py (DocumentChunk, KnowledgeDocument,
                               KnowledgeChunk, Embedding type), chat.py (Conversation,
-                              Message, ToolExecution)
+                              Message, ToolExecution), booking.py (Booking,
+                              ConfirmationRequest)
   app/agents/                 tools.py (@tool registry, ToolContext, execute()),
                               prompts.py (SPECIALISTS: focus, instructions, tools),
                               document_checks.py (cross-document conflict checks),
+                              booking_tools.py (search_*, book_*, get/cancel/modify),
                               supervisor.py (route() -> Intent, run_agent() tool loop)
   app/api/deps.py             get_current_user (Bearer or cookie + CSRF), require_admin
-  app/api/routes/             auth, users, documents, search, chat, health
+  app/api/routes/             auth, users, documents, search, chat (+ /chat/confirm),
+                              bookings, health
+  app/providers/              base.py (BookingProvider, ProviderError), mock.py,
+                              get_provider(kind)
   app/services/               auth_service, audit_service.record(), document_service,
                               document_processor (pipeline), jobs (DB queue), storage
                               (encrypted local/S3), file_validation, malware, ocr,
                               text_extraction, extraction_service, llm_service,
-                              chat_service (conversations, memory, one chat turn)
+                              chat_service (conversations, memory, one chat turn),
+                              booking_service (propose_*, confirm), booking_state
   app/rag/                    chunking.py, retrieval.py (search_user_documents,
                               search_knowledge, query_vector), ingest.py
-  alembic/versions/           0001 users/audit, 0002 documents/jobs, 0003 rag, 0004 chat
+  alembic/versions/           0001 users/audit, 0002 documents/jobs, 0003 rag, 0004 chat, 0005 bookings
   tests/                      conftest (SQLite via real migrations; env set there),
                               samples.py (generated PDF/DOCX/PNG/passport MRZ),
                               fake_llm.py (ScriptedLLM with call(), reply(), intent())
@@ -305,7 +311,23 @@ Mostly prompts and tool subsets on top of phase 4. Booking tools arrive in phase
 
 ---
 
-## 7. Phase 6: mock providers and booking (§22–23, §25, §27–29, §46, §60, §63, §71, rules 1–2, 7, 12, 15)
+## 7. Phase 6: mock providers and booking (done)
+
+**As built:** as planned below, with these choices:
+- Booking rows are created when the user confirms (status BOOKING, then CONFIRMED or
+  FAILED), so SEARCHING / PRICE_CHECK / AWAITING_CONFIRMATION exist in the state
+  machine but aren't stored.
+- One `MockProvider(kind)` covers all four kinds. Its offer ids encode the search
+  (`flight|BOM|LHR|2026-10-20|economy|0`), so no offer storage is needed.
+- The `book_*` tools share one implementation, registered per kind.
+- `BookingService.confirm()` returns an `Outcome` (booking, text, message type) and
+  adds the outcome message to the conversation.
+- Price revalidation (phase 7) goes in `BookingService._book`, which already re-fetches
+  the offer before calling `provider.book`.
+
+Tests are in `tests/test_bookings.py`; live results are in PLATFORM.md.
+
+### Original phase 6 plan (§22–23, §25, §27–29, §46, §60, §63, §71, rules 1–2, 7, 12, 15)
 
 1. **Models + migration**
    - `Booking(id, user_id, kind[flight|hotel|car|excursion], provider, provider_ref,

@@ -22,8 +22,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import document_checks
 from app.agents.document_checks import DocFields
+from app.core.errors import AppError
 from app.core.logging import mask
 from app.db.models import Document, DocumentType, ExtractedEntity, ToolExecution, User
+from app.providers import ProviderError
 from app.rag import retrieval
 from app.services.llm_service import ToolCall, ToolSpec
 
@@ -35,8 +37,9 @@ class ToolContext:
     session: AsyncSession
     user: User
     conversation_id: uuid.UUID | None = None
-    # Citations collected from tool results during one assistant turn.
+    # Citations and UI cards (offers, bookings, confirmations) from one assistant turn.
     sources: list[dict[str, Any]] = field(default_factory=list)
+    cards: list[dict[str, Any]] = field(default_factory=list)
 
     def cite(self, source: dict[str, Any]) -> None:
         if source not in self.sources:
@@ -93,6 +96,9 @@ async def execute(ctx: ToolContext, call: ToolCall, allowed: list[str]) -> dict[
             return {"error": "The arguments were invalid. Check the tool's parameters."}
         try:
             return await tool_.handler(ctx, args)
+        except (AppError, ProviderError) as exc:  # expected refusals, safe to show
+            error = getattr(exc, "code", "refused")
+            return {"error": exc.message}
         except Exception:
             logger.exception("tool failed", extra={"tool": call.name})
             error = "tool_failed"
