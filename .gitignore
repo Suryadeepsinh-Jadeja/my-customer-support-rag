@@ -170,3 +170,8 @@ customer_support_chat/data/travel2.sqlite*
 *.bkp*
 .dev.env
 .claude/
+
+# AI Travel Platform (backend/ + frontend/)
+!frontend/lib/
+backend/.venv/
+backend/*.db

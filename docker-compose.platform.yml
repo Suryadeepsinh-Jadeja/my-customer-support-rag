@@ -1,0 +1,54 @@
+# AI Travel Platform (new stack: Next.js + FastAPI + PostgreSQL/pgvector).
+#
+#   cp backend/.env.example backend/.env      # set JWT_SECRET (and GEMINI_API_KEY later)
+#   docker compose -f docker-compose.platform.yml up -d --build
+#
+#   Frontend  http://localhost:3000
+#   API docs  http://localhost:8000/docs
+#
+# The backend applies database migrations on start-up (RUN_MIGRATIONS=true).
+# Object storage, Redis and the document worker are added with the phases that use them.
+
+name: travel-ai-platform
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-travel}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-travel}
+      POSTGRES_DB: ${POSTGRES_DB:-travel}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-travel}:${POSTGRES_PASSWORD:-travel}@postgres:5432/${POSTGRES_DB:-travel}
+      RUN_MIGRATIONS: "true"
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:8000
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
