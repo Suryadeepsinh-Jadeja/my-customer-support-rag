@@ -154,7 +154,7 @@ def route_primary_assistant(state: State) -> Literal[
             return "enter_book_excursion"
         else:
             return "primary_assistant_tools"
-    return "primary_assistant"
+    return END
 
 
 def build_graph(
@@ -221,7 +221,6 @@ def build_graph(
             "enter_book_hotel": "enter_book_hotel",
             "enter_book_excursion": "enter_book_excursion",
             "primary_assistant_tools": "primary_assistant_tools",
-            "primary_assistant": "primary_assistant",
             END: END,
         },
     )
