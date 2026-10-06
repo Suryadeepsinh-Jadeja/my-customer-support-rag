@@ -2,6 +2,7 @@ from vectorizer.app.vectordb.vectordb import VectorDB
 from customer_support_chat.app.core.settings import get_settings
 from langchain_core.tools import tool
 import sqlite3
+from contextlib import closing
 from typing import Optional, Union, List, Dict
 from datetime import datetime, date
 
@@ -33,21 +34,22 @@ def search_hotels(
         })
     return hotels
 
+def _write(*statements) -> int:
+    """Run UPDATE statements in one transaction; return the rows changed by the last one."""
+    with closing(sqlite3.connect(db)) as conn:
+        cursor = conn.cursor()
+        for sql, params in statements:
+            cursor.execute(sql, params)
+        conn.commit()
+        return cursor.rowcount
+
+
 @tool
 def book_hotel(hotel_id: int) -> str:
     """Book a hotel by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute("UPDATE hotels SET booked = 1 WHERE id = ?", (hotel_id,))
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE hotels SET booked = 1 WHERE id = ?", (hotel_id,))):
         return f"Hotel {hotel_id} successfully booked."
-    else:
-        conn.close()
-        return f"No hotel found with ID {hotel_id}."
+    return f"No hotel found with ID {hotel_id}."
 
 @tool
 def update_hotel(
@@ -59,46 +61,18 @@ def update_hotel(
     if not checkin_date and not checkout_date:
         return "Nothing to update: provide a new checkin_date and/or checkout_date (YYYY-MM-DD)."
 
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT 1 FROM hotels WHERE id = ?", (hotel_id,))
-    if cursor.fetchone() is None:
-        conn.close()
-        return f"No hotel found with ID {hotel_id}."
-
+    statements = []
     if checkin_date:
-        cursor.execute(
-            "UPDATE hotels SET checkin_date = ? WHERE id = ?",
-            (checkin_date.strftime('%Y-%m-%d'), hotel_id),
-        )
+        statements.append(("UPDATE hotels SET checkin_date = ? WHERE id = ?", (checkin_date.strftime('%Y-%m-%d'), hotel_id)))
     if checkout_date:
-        cursor.execute(
-            "UPDATE hotels SET checkout_date = ? WHERE id = ?",
-            (checkout_date.strftime('%Y-%m-%d'), hotel_id),
-        )
-
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+        statements.append(("UPDATE hotels SET checkout_date = ? WHERE id = ?", (checkout_date.strftime('%Y-%m-%d'), hotel_id)))
+    if _write(*statements):
         return f"Hotel {hotel_id} successfully updated."
-    else:
-        conn.close()
-        return f"No hotel found with ID {hotel_id}."
+    return f"No hotel found with ID {hotel_id}."
 
 @tool
 def cancel_hotel(hotel_id: int) -> str:
     """Cancel a hotel by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute("UPDATE hotels SET booked = 0 WHERE id = ?", (hotel_id,))
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE hotels SET booked = 0 WHERE id = ?", (hotel_id,))):
         return f"Hotel {hotel_id} successfully cancelled."
-    else:
-        conn.close()
-        return f"No hotel found with ID {hotel_id}."
+    return f"No hotel found with ID {hotel_id}."

@@ -2,6 +2,7 @@ from vectorizer.app.vectordb.vectordb import VectorDB
 from customer_support_chat.app.core.settings import get_settings
 from langchain_core.tools import tool
 import sqlite3
+from contextlib import closing
 from typing import List, Dict, Optional, Union
 from datetime import datetime, date
 
@@ -34,21 +35,22 @@ def search_car_rentals(
         })
     return rentals
 
+def _write(*statements) -> int:
+    """Run UPDATE statements in one transaction; return the rows changed by the last one."""
+    with closing(sqlite3.connect(db)) as conn:
+        cursor = conn.cursor()
+        for sql, params in statements:
+            cursor.execute(sql, params)
+        conn.commit()
+        return cursor.rowcount
+
+
 @tool
 def book_car_rental(rental_id: int) -> str:
     """Book a car rental by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute("UPDATE car_rentals SET booked = 1 WHERE id = ?", (rental_id,))
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE car_rentals SET booked = 1 WHERE id = ?", (rental_id,))):
         return f"Car rental {rental_id} successfully booked."
-    else:
-        conn.close()
-        return f"No car rental found with ID {rental_id}."
+    return f"No car rental found with ID {rental_id}."
 
 @tool
 def update_car_rental(
@@ -60,46 +62,18 @@ def update_car_rental(
     if not start_date and not end_date:
         return "Nothing to update: provide a new start_date and/or end_date (YYYY-MM-DD)."
 
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT 1 FROM car_rentals WHERE id = ?", (rental_id,))
-    if cursor.fetchone() is None:
-        conn.close()
-        return f"No car rental found with ID {rental_id}."
-
+    statements = []
     if start_date:
-        cursor.execute(
-            "UPDATE car_rentals SET start_date = ? WHERE id = ?",
-            (start_date.strftime('%Y-%m-%d'), rental_id),
-        )
+        statements.append(("UPDATE car_rentals SET start_date = ? WHERE id = ?", (start_date.strftime('%Y-%m-%d'), rental_id)))
     if end_date:
-        cursor.execute(
-            "UPDATE car_rentals SET end_date = ? WHERE id = ?",
-            (end_date.strftime('%Y-%m-%d'), rental_id),
-        )
-
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+        statements.append(("UPDATE car_rentals SET end_date = ? WHERE id = ?", (end_date.strftime('%Y-%m-%d'), rental_id)))
+    if _write(*statements):
         return f"Car rental {rental_id} successfully updated."
-    else:
-        conn.close()
-        return f"No car rental found with ID {rental_id}."
+    return f"No car rental found with ID {rental_id}."
 
 @tool
 def cancel_car_rental(rental_id: int) -> str:
     """Cancel a car rental by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute("UPDATE car_rentals SET booked = 0 WHERE id = ?", (rental_id,))
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE car_rentals SET booked = 0 WHERE id = ?", (rental_id,))):
         return f"Car rental {rental_id} successfully cancelled."
-    else:
-        conn.close()
-        return f"No car rental found with ID {rental_id}."
+    return f"No car rental found with ID {rental_id}."

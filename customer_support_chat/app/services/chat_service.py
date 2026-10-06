@@ -27,6 +27,7 @@ from customer_support_chat.app.core.errors import (
     CustomerNotIdentifiedError,
     NoPendingActionError,
     SupportError,
+    TooManyLoginAttemptsError,
 )
 from customer_support_chat.app.core.logger import log_event, logger, mask_id
 from customer_support_chat.app.core.settings import get_settings
@@ -128,6 +129,7 @@ class ChatService:
         self.db_path = db_path or self.settings.SQLITE_DB_PATH
         self._sessions: dict[str, Session] = {}
         self._conversations: dict[str, Conversation] = {}
+        self._failed_logins: dict[str, list[float]] = {}
         self._state_lock = threading.Lock()
 
     # ------------------------------------------------------------------ graph
@@ -149,6 +151,14 @@ class ChatService:
         if not passenger_id or not reference:
             raise CustomerNotIdentifiedError("Missing passenger ID or booking reference")
 
+        window = self.settings.LOGIN_LOCKOUT_MINUTES * 60
+        with self._state_lock:
+            recent = [t for t in self._failed_logins.get(passenger_id, []) if t > time.time() - window]
+            self._failed_logins[passenger_id] = recent
+            if len(recent) >= self.settings.LOGIN_MAX_ATTEMPTS:
+                log_event("auth.locked", passenger=mask_id(passenger_id))
+                raise TooManyLoginAttemptsError("Too many failed sign-in attempts")
+
         try:
             with closing(sqlite3.connect(self.db_path)) as conn:
                 row = conn.execute(
@@ -160,6 +170,8 @@ class ChatService:
             raise AssistantUnavailableError(str(exc)) from exc
 
         if row is None:
+            with self._state_lock:
+                self._failed_logins.setdefault(passenger_id, []).append(time.time())
             log_event("auth.failed", passenger=mask_id(passenger_id))
             raise CustomerNotIdentifiedError("Passenger ID and booking reference do not match")
 
@@ -169,8 +181,9 @@ class ChatService:
             expires_at=time.time() + self.settings.SESSION_TTL_MINUTES * 60,
         )
         with self._state_lock:
-            self._purge_expired()
+            self._failed_logins.pop(passenger_id, None)
             self._sessions[session.token] = session
+        self._purge_expired()
         log_event("auth.success", passenger=mask_id(passenger_id))
         return session
 
@@ -189,14 +202,35 @@ class ChatService:
             self._sessions.pop(token or "", None)
 
     def _purge_expired(self) -> None:
+        """Drop expired sessions and idle conversations, including their graph history."""
         now = time.time()
-        for token in [t for t, s in self._sessions.items() if s.expires_at < now]:
-            del self._sessions[token]
         idle_limit = now - self.settings.SESSION_TTL_MINUTES * 60
-        for cid in [c for c, conv in self._conversations.items() if conv.last_active < idle_limit]:
-            del self._conversations[cid]
+        with self._state_lock:
+            for token in [t for t, s in self._sessions.items() if s.expires_at < now]:
+                del self._sessions[token]
+            lockout_start = now - self.settings.LOGIN_LOCKOUT_MINUTES * 60
+            for pid in [p for p, times in self._failed_logins.items() if max(times, default=0) < lockout_start]:
+                del self._failed_logins[pid]
+            # Skip conversations that are still processing a message.
+            stale = [
+                cid for cid, conv in self._conversations.items()
+                if conv.last_active < idle_limit and not conv.lock.locked()
+            ]
+            for cid in stale:
+                del self._conversations[cid]
+            graph = self._graph
+        checkpointer = getattr(graph, "checkpointer", None)
+        if checkpointer is not None:
+            for cid in stale:
+                try:
+                    checkpointer.delete_thread(cid)
+                except Exception:
+                    logger.exception("Could not delete the history of an expired conversation")
 
     def _conversation(self, conversation_id: Optional[str], passenger_id: Optional[str], create: bool):
+        if create and not conversation_id:
+            # Guests never sign in, so also clean up when a new conversation starts.
+            self._purge_expired()
         with self._state_lock:
             if not conversation_id:
                 if not create:

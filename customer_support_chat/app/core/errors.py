@@ -22,6 +22,14 @@ class CustomerNotIdentifiedError(SupportError, ValueError):
         super().__init__(message)
 
 
+class TooManyLoginAttemptsError(SupportError):
+    status_code = 429
+    code = "too_many_attempts"
+    user_message = (
+        "Too many unsuccessful sign-in attempts. Please wait a few minutes and try again."
+    )
+
+
 class ConfigurationError(SupportError):
     status_code = 503
     code = "service_unavailable"

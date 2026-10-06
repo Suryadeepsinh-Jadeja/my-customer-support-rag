@@ -2,6 +2,7 @@ from vectorizer.app.vectordb.vectordb import VectorDB
 from customer_support_chat.app.core.settings import get_settings
 from langchain_core.tools import tool
 import sqlite3
+from contextlib import closing
 from typing import Optional, List, Dict
 
 settings = get_settings()
@@ -31,57 +32,33 @@ def search_trip_recommendations(
         })
     return recommendations
 
+def _write(*statements) -> int:
+    """Run UPDATE statements in one transaction; return the rows changed by the last one."""
+    with closing(sqlite3.connect(db)) as conn:
+        cursor = conn.cursor()
+        for sql, params in statements:
+            cursor.execute(sql, params)
+        conn.commit()
+        return cursor.rowcount
+
+
 @tool
 def book_excursion(recommendation_id: int) -> str:
     """Book an excursion by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "UPDATE trip_recommendations SET booked = 1 WHERE id = ?", (recommendation_id,)
-    )
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE trip_recommendations SET booked = 1 WHERE id = ?", (recommendation_id,))):
         return f"Excursion {recommendation_id} successfully booked."
-    else:
-        conn.close()
-        return f"No excursion found with ID {recommendation_id}."
+    return f"No excursion found with ID {recommendation_id}."
 
 @tool
 def update_excursion(recommendation_id: int, details: str) -> str:
     """Update an excursion's details by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "UPDATE trip_recommendations SET details = ? WHERE id = ?",
-        (details, recommendation_id),
-    )
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE trip_recommendations SET details = ? WHERE id = ?", (details, recommendation_id))):
         return f"Excursion {recommendation_id} successfully updated."
-    else:
-        conn.close()
-        return f"No excursion found with ID {recommendation_id}."
+    return f"No excursion found with ID {recommendation_id}."
 
 @tool
 def cancel_excursion(recommendation_id: int) -> str:
     """Cancel an excursion by its ID."""
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "UPDATE trip_recommendations SET booked = 0 WHERE id = ?", (recommendation_id,)
-    )
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
+    if _write(("UPDATE trip_recommendations SET booked = 0 WHERE id = ?", (recommendation_id,))):
         return f"Excursion {recommendation_id} successfully cancelled."
-    else:
-        conn.close()
-        return f"No excursion found with ID {recommendation_id}."
+    return f"No excursion found with ID {recommendation_id}."

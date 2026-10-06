@@ -70,6 +70,9 @@ class Config:
         )
         self.REQUEST_TIMEOUT_SECONDS: int = _int("REQUEST_TIMEOUT_SECONDS", 120)
         self.SESSION_TTL_MINUTES: int = _int("SESSION_TTL_MINUTES", 120)
+        # Failed sign-ins allowed per passenger ID within the lockout window.
+        self.LOGIN_MAX_ATTEMPTS: int = _int("LOGIN_MAX_ATTEMPTS", 5)
+        self.LOGIN_LOCKOUT_MINUTES: int = _int("LOGIN_LOCKOUT_MINUTES", 15)
         self.DEMO_PASSENGER_ID: str = environ.get("DEMO_PASSENGER_ID", "").strip()
 
         # Logging

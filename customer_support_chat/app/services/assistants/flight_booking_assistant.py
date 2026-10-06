@@ -25,6 +25,8 @@ flight_booking_prompt = ChatPromptTemplate.from_messages(
             "Confirm the updated flight details with the customer and inform them of any additional fees, "
             "checking the applicable fees with `lookup_policy` (flight change / cancellation policy) for the ticket's fare class. "
             "To find alternative flights use `search_flights` with IATA airport codes and dates. "
+            "A flight change keeps the same origin and destination; a different route needs a cancellation and a new booking. "
+            "If the ticket has several flights, pass the flight being replaced as `old_flight_id` to `update_ticket_to_new_flight`. "
             "When searching, be persistent. Expand your query bounds if the first search returns no results. "
             "If you need more information or the customer changes their mind, escalate the task back to the main assistant. "
             "Remember that a booking isn't completed until after the relevant tool has successfully been used."

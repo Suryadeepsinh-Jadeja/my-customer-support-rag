@@ -156,6 +156,7 @@ Copy `.env.example` to `.env` and set at least `GEMINI_API_KEY`.
 | `API_HOST` / `API_PORT` / `API_URL` | `127.0.0.1` / `8000` / `http://127.0.0.1:8000` | Backend address |
 | `CORS_ORIGINS` | `http://localhost:8501,...` | Allowed browser origins |
 | `REQUEST_TIMEOUT_SECONDS` / `SESSION_TTL_MINUTES` | `120` / `120` | Request timeout, session lifetime |
+| `LOGIN_MAX_ATTEMPTS` / `LOGIN_LOCKOUT_MINUTES` | `5` / `15` | Failed sign-ins allowed per passenger ID before a temporary lockout |
 | `DEMO_PASSENGER_ID` | - | Development only: pre-fills the sign-in form |
 | `LOG_LEVEL` / `LOG_FORMAT` | `INFO` / `text` | `LOG_FORMAT=json` for log aggregation |
 | `HF_TOKEN` | - | Optional, raises Hugging Face download limits |
@@ -231,7 +232,7 @@ customer's message is passed to the assistant as the reason.
 Errors never include tracebacks:
 `{"status": "error", "error": {"code": "not_authenticated", "message": "We couldn't identify your customer account. ..."}}`.
 The codes are `invalid_request` (422), `not_authenticated` (401), `conversation_not_found` (404),
-`no_pending_action` / `conversation_busy` (409), `rate_limited` (429),
+`no_pending_action` / `conversation_busy` (409), `rate_limited` / `too_many_attempts` (429),
 `assistant_unavailable` / `service_unavailable` (503), `timeout` (504) and `internal_error` (500).
 
 ---
@@ -239,16 +240,17 @@ The codes are `invalid_request` (422), `not_authenticated` (401), `conversation_
 ## Testing
 
 ```bash
-python -m pytest                 # 70 tests, no API key or network needed (~1 min)
+python -m pytest                 # 87 tests, no API key or network needed (~1 min)
 ```
 
 The tests use a scripted fake LLM, a fixture database and a temporary embedded
 Qdrant holding the **real** knowledge base and models:
 
 - **Unit:** dialog-state reducer, routing functions, assistant retry cap, formatting, settings, log masking
-- **Tools:** flight info, structured search, rebooking rules (3-hour limit, unknown flight, other customer's ticket), cancel, hotel/car/excursion CRUD
+- **Tools:** flight info, structured search, rebooking rules (3-hour limit, same route, single leg of multi-leg tickets, unknown flight, other customer's ticket), cancel, new flight bookings, hotel/car/excursion CRUD
 - **RAG:** loader metadata, known / unknown / irrelevant questions, source attribution, missing-index fallback
 - **Graph flows:** primary → flight / car / hotel / excursion, hybrid RAG + booking, approve and decline sensitive actions, escalation back to the primary assistant, guest behaviour
+- **Service:** sign-in lockout, cleanup of idle conversations and their graph history
 - **API:** login, chat, confirm, conversation ownership, validation, LLM failure, rate limit, timeout, health
 
 ### End-to-end smoke test (real LLM)

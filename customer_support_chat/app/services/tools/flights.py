@@ -2,7 +2,9 @@ from vectorizer.app.vectordb.vectordb import VectorDB
 from customer_support_chat.app.core.settings import get_settings
 from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
+import secrets
 import sqlite3
+from contextlib import closing
 from typing import Optional, Union, List, Dict
 from datetime import datetime, date, timedelta
 import pytz
@@ -33,9 +35,6 @@ def fetch_user_flight_information(*, config: RunnableConfig) -> List[Dict]:
     """Fetch all tickets for the user along with corresponding flight information and seat assignments."""
     passenger_id = get_passenger_id(config)
 
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
     query = """
     SELECT 
         t.ticket_no, t.book_ref,
@@ -49,15 +48,10 @@ def fetch_user_flight_information(*, config: RunnableConfig) -> List[Dict]:
     WHERE 
         t.passenger_id = ?
     """
-    cursor.execute(query, (passenger_id,))
-    rows = cursor.fetchall()
-    column_names = [column[0] for column in cursor.description]
-    results = [dict(zip(column_names, row)) for row in rows]
-
-    cursor.close()
-    conn.close()
-
-    return results
+    with closing(sqlite3.connect(db)) as conn:
+        cursor = conn.execute(query, (passenger_id,))
+        column_names = [column[0] for column in cursor.description]
+        return [dict(zip(column_names, row)) for row in cursor.fetchall()]
 
 @tool
 def search_flights(
@@ -73,8 +67,6 @@ def search_flights(
     YYYY-MM-DD dates bounding the scheduled departure. Use `query` only for free-text
     searches when no filters apply. Returns flight_id values usable for rebooking."""
     if departure_airport or arrival_airport or start_time or end_time:
-        conn = sqlite3.connect(db)
-        conn.row_factory = sqlite3.Row
         sql = (
             "SELECT flight_id, flight_no, departure_airport, arrival_airport, "
             "scheduled_departure, scheduled_arrival, status, aircraft_code "
@@ -96,9 +88,9 @@ def search_flights(
             params.append((end_time + timedelta(days=1)).isoformat())
         sql += " ORDER BY scheduled_departure LIMIT ?"
         params.append(max(1, min(limit, 20)))
-        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
-        conn.close()
-        return rows
+        with closing(sqlite3.connect(db)) as conn:
+            conn.row_factory = sqlite3.Row
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
 
     if not query:
         return []
@@ -124,91 +116,131 @@ def search_flights(
         })
     return flights
 
-@tool
-def update_ticket_to_new_flight(
-    ticket_no: str, new_flight_id: int, *, config: RunnableConfig
-) -> str:
-    """Update the user's ticket to a new valid flight (use the flight_id returned by search_flights)."""
-    passenger_id = get_passenger_id(config)
-
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT departure_airport, arrival_airport, scheduled_departure FROM flights WHERE flight_id = ?",
-        (new_flight_id,),
-    )
-    new_flight = cursor.fetchone()
-    if not new_flight:
-        conn.close()
-        return f"Invalid new flight ID {new_flight_id} provided."
-
-    departure = datetime.fromisoformat(str(new_flight[2]))
+def _hours_until(scheduled_departure) -> float:
+    departure = datetime.fromisoformat(str(scheduled_departure))
     if departure.tzinfo is None:
         departure = departure.replace(tzinfo=pytz.UTC)
-    if departure - datetime.now(pytz.UTC) < timedelta(hours=MIN_HOURS_BEFORE_DEPARTURE):
-        conn.close()
-        return (
-            f"Not permitted to reschedule to flight {new_flight_id}: it departs in less than "
-            f"{MIN_HOURS_BEFORE_DEPARTURE} hours (scheduled {new_flight[2]})."
+    return (departure - datetime.now(pytz.UTC)).total_seconds() / 3600
+
+
+@tool
+def update_ticket_to_new_flight(
+    ticket_no: str,
+    new_flight_id: int,
+    old_flight_id: Optional[int] = None,
+    *,
+    config: RunnableConfig,
+) -> str:
+    """Move one flight of the user's ticket to a new flight on the same route (use the
+    flight_id returned by search_flights). If the ticket has several flights, set
+    old_flight_id to the flight_id being replaced. Origin and destination cannot change."""
+    passenger_id = get_passenger_id(config)
+
+    with closing(sqlite3.connect(db)) as conn:
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT departure_airport, arrival_airport, scheduled_departure FROM flights WHERE flight_id = ?",
+            (new_flight_id,),
         )
+        new_flight = cursor.fetchone()
+        if not new_flight:
+            return f"Invalid new flight ID {new_flight_id} provided."
 
-    # Check if the ticket exists and belongs to the passenger
-    cursor.execute(
-        "SELECT * FROM tickets WHERE ticket_no = ? AND passenger_id = ?",
-        (ticket_no, passenger_id),
+        if _hours_until(new_flight[2]) < MIN_HOURS_BEFORE_DEPARTURE:
+            return (
+                f"Not permitted to reschedule to flight {new_flight_id}: it departs in less than "
+                f"{MIN_HOURS_BEFORE_DEPARTURE} hours (scheduled {new_flight[2]})."
+            )
+
+        # Check if the ticket exists and belongs to the passenger
+        cursor.execute(
+            "SELECT 1 FROM tickets WHERE ticket_no = ? AND passenger_id = ?",
+            (ticket_no, passenger_id),
+        )
+        if not cursor.fetchone():
+            return f"Ticket {ticket_no} was not found in the signed-in customer's bookings."
+
+        cursor.execute(
+            """
+            SELECT tf.flight_id, f.departure_airport, f.arrival_airport, f.scheduled_departure
+            FROM ticket_flights tf JOIN flights f ON tf.flight_id = f.flight_id
+            WHERE tf.ticket_no = ?
+            ORDER BY f.scheduled_departure
+            """,
+            (ticket_no,),
+        )
+        legs = cursor.fetchall()
+        if old_flight_id is not None:
+            matching = [leg for leg in legs if leg[0] == old_flight_id]
+            if not matching:
+                return f"Flight {old_flight_id} is not part of ticket {ticket_no}."
+            old_leg = matching[0]
+        elif len(legs) == 1:
+            old_leg = legs[0]
+        elif not legs:
+            return f"Ticket {ticket_no} has no flights to change."
+        else:
+            options = ", ".join(f"{leg[0]} ({leg[1]} -> {leg[2]})" for leg in legs)
+            return (
+                f"Ticket {ticket_no} has {len(legs)} flights: {options}. "
+                "Ask the customer which one to change and pass its flight_id as old_flight_id."
+            )
+
+        old_id, old_from, old_to, old_departure = old_leg
+        if new_flight_id == old_id:
+            return f"Ticket {ticket_no} is already on flight {new_flight_id}."
+        if (new_flight[0], new_flight[1]) != (old_from, old_to):
+            return (
+                f"Not permitted: flight {new_flight_id} flies {new_flight[0]} -> {new_flight[1]}, but the "
+                f"flight being changed flies {old_from} -> {old_to}. Origin and destination cannot be "
+                "changed; that requires cancelling and booking a new flight."
+            )
+        if _hours_until(old_departure) < MIN_HOURS_BEFORE_DEPARTURE:
+            return (
+                f"Not permitted to change flight {old_id}: changes are only possible up to "
+                f"{MIN_HOURS_BEFORE_DEPARTURE} hours before its departure (scheduled {old_departure})."
+            )
+
+        cursor.execute(
+            "UPDATE ticket_flights SET flight_id = ? WHERE ticket_no = ? AND flight_id = ?",
+            (new_flight_id, ticket_no, old_id),
+        )
+        # The seat on the old flight does not carry over to the new one.
+        cursor.execute(
+            "DELETE FROM boarding_passes WHERE ticket_no = ? AND flight_id = ?",
+            (ticket_no, old_id),
+        )
+        conn.commit()
+
+    return (
+        f"Ticket {ticket_no} successfully updated from flight {old_id} to flight {new_flight_id}. "
+        "The previous seat assignment does not carry over."
     )
-    ticket = cursor.fetchone()
-    if not ticket:
-        conn.close()
-        return f"Ticket {ticket_no} was not found in the signed-in customer's bookings."
 
-    # Update the flight in ticket_flights
-    cursor.execute(
-        "UPDATE ticket_flights SET flight_id = ? WHERE ticket_no = ?",
-        (new_flight_id, ticket_no),
-    )
-    conn.commit()
-
-    if cursor.rowcount > 0:
-        conn.close()
-        return f"Ticket {ticket_no} successfully updated to flight {new_flight_id}."
-    else:
-        conn.close()
-        return f"Failed to update ticket {ticket_no}."
 
 @tool
 def cancel_ticket(ticket_no: str, *, config: RunnableConfig) -> str:
     """Cancel the user's ticket and remove it from the database."""
     passenger_id = get_passenger_id(config)
 
-    conn = sqlite3.connect(db)
-    cursor = conn.cursor()
+    with closing(sqlite3.connect(db)) as conn:
+        cursor = conn.cursor()
 
-    # Check if the ticket exists and belongs to the passenger
-    cursor.execute(
-        "SELECT * FROM tickets WHERE ticket_no = ? AND passenger_id = ?",
-        (ticket_no, passenger_id),
-    )
-    ticket = cursor.fetchone()
-    if not ticket:
-        conn.close()
-        return f"Ticket {ticket_no} was not found in the signed-in customer's bookings."
+        # Check if the ticket exists and belongs to the passenger
+        cursor.execute(
+            "SELECT 1 FROM tickets WHERE ticket_no = ? AND passenger_id = ?",
+            (ticket_no, passenger_id),
+        )
+        if not cursor.fetchone():
+            return f"Ticket {ticket_no} was not found in the signed-in customer's bookings."
 
-    # Delete from ticket_flights
-    cursor.execute(
-        "DELETE FROM ticket_flights WHERE ticket_no = ?",
-        (ticket_no,),
-    )
-    # Delete from tickets
-    cursor.execute(
-        "DELETE FROM tickets WHERE ticket_no = ?",
-        (ticket_no,),
-    )
-    conn.commit()
+        for table in ("boarding_passes", "ticket_flights", "tickets"):
+            cursor.execute(f"DELETE FROM {table} WHERE ticket_no = ?", (ticket_no,))
+        conn.commit()
 
-    conn.close()
     return f"Ticket {ticket_no} successfully cancelled."
+
 @tool
 def book_flight(
     flight_id: int,
@@ -264,6 +296,12 @@ def book_flight(
         if not flight:
             return f"Flight {flight_id} does not exist."
 
+        if _hours_until(flight[4]) < MIN_HOURS_BEFORE_DEPARTURE:
+            return (
+                f"Flight {flight_id} cannot be booked: it departs in less than "
+                f"{MIN_HOURS_BEFORE_DEPARTURE} hours (scheduled {flight[4]})."
+            )
+
         # -------------------------------------------------
         # 3. Find valid fare for this flight
         # -------------------------------------------------
@@ -312,52 +350,21 @@ def book_flight(
             )
 
         # -------------------------------------------------
-        # 5. Generate booking reference
+        # 5. Generate a booking reference not used yet
         # -------------------------------------------------
-        cursor.execute(
-            """
-            SELECT book_ref
-            FROM bookings
-            ORDER BY rowid DESC
-            LIMIT 1
-            """
-        )
-
-        last_booking = cursor.fetchone()
-
-        if last_booking:
-            try:
-                next_number = int(last_booking[0], 16) + 1
-            except ValueError:
-                next_number = 1
-        else:
-            next_number = 1
-
-        book_ref = f"{next_number:06X}"
+        # Existing references are not sequential, so "last + 1" can collide.
+        while True:
+            book_ref = secrets.token_hex(3).upper()
+            cursor.execute("SELECT 1 FROM bookings WHERE book_ref = ?", (book_ref,))
+            if not cursor.fetchone():
+                break
 
         # -------------------------------------------------
-        # 6. Generate ticket number
+        # 6. Generate ticket number (one above the highest)
         # -------------------------------------------------
-        cursor.execute(
-            """
-            SELECT ticket_no
-            FROM tickets
-            ORDER BY rowid DESC
-            LIMIT 1
-            """
-        )
-
-        last_ticket = cursor.fetchone()
-
-        if last_ticket:
-            try:
-                next_ticket = int(last_ticket[0]) + 1
-            except ValueError:
-                next_ticket = 1
-        else:
-            next_ticket = 1
-
-        ticket_no = str(next_ticket).zfill(16)
+        cursor.execute("SELECT MAX(CAST(ticket_no AS INTEGER)) FROM tickets")
+        highest_ticket = cursor.fetchone()[0] or 0
+        ticket_no = str(highest_ticket + 1).zfill(16)
 
         # -------------------------------------------------
         # 7. Create booking
