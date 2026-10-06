@@ -178,20 +178,21 @@ Open http://localhost:3000 and create an account.
 
 ## 5. Try it
 
-1. Register, then fill in **Profile** (name, home airport, phone) and **Travel
-   preferences**.
-2. Upload a passport, a flight ticket and a hotel booking under **Documents** and wait until
-   each shows *Ready for AI*.
-3. Ask the assistant (`POST /api/chat`, or the chat page once phase 8 lands):
+1. Register, then fill in **Profile** (name as on your passport, home airport, phone) and
+   **Travel preferences**. The chat page shows a banner until these are done.
+2. Upload a passport, a flight ticket and a hotel booking under **Documents** (or with the
+   paperclip in the chat) and wait until each shows *Ready for AI*.
+3. On the chat page (the home page), ask:
    - "What is my flight number?" / "What time do I arrive?" / "What is my baggage
-     allowance?"
+     allowance?" Answers show source chips such as "Based on your ticket.pdf, p.1".
    - "Are my documents in order for my trip?"
-   - "Book my flight to London for October 20", then pick an option and press **Confirm**
-     (`POST /api/chat/confirm`).
-   - "Cancel my flight" and confirm.
+   - "Book my flight to London for October 20". Pick an option with **Select**, then
+     press **Review & confirm** and **Confirm** on the confirmation card.
+   - "Cancel my flight", then confirm the same way.
+4. Open **Bookings** to see upcoming, completed and cancelled bookings. A booking's page
+   lets you change its dates or cancel it, always with a confirmation step first.
 
-   Until the chat UI exists, use the interactive API docs at http://localhost:8000/docs:
-   sign in with `POST /api/auth/login`, then call `POST /api/chat`.
+Every action is also available in the API docs at http://localhost:8000/docs.
 
 Bookings made with the mock provider (or a Duffel test key) are test bookings: nothing is
 ticketed or charged.
@@ -249,6 +250,7 @@ likely to change:
 | `no such table` errors | Run `alembic upgrade head` in `backend/` (and check `DATABASE_URL` points at the same file). |
 | Frontend shows network errors | Check the API is running and `BACKEND_URL` in `frontend/.env.local` matches its port. |
 | Port 8000 already in use | Start the API with `--port 8100` and set `BACKEND_URL=http://127.0.0.1:8100`. |
+| `Another next dev server is already running` | Only one `npm run dev` can run per `frontend/` folder. Stop the other one, or use `npx next build && npx next start -p 3001` for a second copy. |
 | Flight booking fails: "needs each traveller's date of birth and gender" | You're using Duffel: upload the traveller's passport, and add a phone number to your profile. |
 | Uploaded files can't be opened after changing settings | `STORAGE_ENCRYPTION_KEY` changed; restore the original key. |
 

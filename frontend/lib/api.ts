@@ -73,10 +73,15 @@ export function uploadFile<T>(
 
 export async function api<T>(
   path: string,
-  init: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+  init: {
+    method?: string;
+    body?: unknown;
+    signal?: AbortSignal;
+    headers?: Record<string, string>;
+  } = {},
 ): Promise<T> {
   const method = init.method ?? "GET";
-  const headers: Record<string, string> = { Accept: "application/json" };
+  const headers: Record<string, string> = { Accept: "application/json", ...init.headers };
   if (init.body !== undefined) headers["Content-Type"] = "application/json";
   if (UNSAFE.has(method)) {
     const csrf = readCookie("csrf_token");

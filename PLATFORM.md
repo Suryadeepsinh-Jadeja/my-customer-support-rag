@@ -27,7 +27,7 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 | 5 | Flight, hotel, car, excursion and document agents | **Done** |
 | 6 | Mock booking providers; flight/hotel/car booking and cancellation | **Done** |
 | 7 | Real provider adapter, price revalidation, confirmation tokens, idempotency, booking state machine | **Done** |
-| 8 | Chat UI, documents UI, bookings UI, flight cards, confirmation dialogs | Not started |
+| 8 | Chat UI, documents UI, bookings UI, flight cards, confirmation dialogs | **Done** |
 | 9 | Redis-backed rate limiting, PII protection, prompt-injection defences, admin panel | Partly (see below) |
 | 10 | Unit/integration/E2E tests, CI/CD, production Docker builds | Partly (see below) |
 | 11 | Deployment config, monitoring, full documentation | Not started |
@@ -309,6 +309,51 @@ Verified live against the **Duffel sandbox** (test key):
 
 The Duffel tests use responses recorded in that sandbox session (`tests/fixtures/duffel/`,
 trimmed of fields the adapter doesn't read).
+
+### What phase 8 delivers
+
+- **Chat page** (the home page, `/`; each conversation at `/chat/{id}`):
+  - "AI Travel Assistant" header, suggestions for an empty chat and a composer with
+    Enter-to-send. The user's message appears straight away (optimistic) with a
+    "Thinking…" state.
+  - Assistant replies render light Markdown safely, and show source chips ("Based on your
+    ticket.pdf, p.1" linking to the document, "Source: Baggage Policy · section").
+  - Flight, hotel, car and excursion **offer cards** (times, duration, stops,
+    cabin/fare, baggage, price, "Test booking" badge) have a **Select** button that sends
+    the choice as a message.
+  - **Booking cards** link to the booking.
+  - **Confirmation cards** open a dialog showing exactly what will happen (price,
+    travellers, refund or new dates) with **Confirm** / **Decline**. These call
+    `POST /api/chat/confirm` with an `Idempotency-Key`. Only the latest, unexpired
+    confirmation card is actionable.
+  - The paperclip uploads a document from the chat and shows its processing status live.
+  - The account set-up checklist is now a banner on the new-chat page.
+- **Sidebar:** New conversation, the conversation list, Documents, Bookings, Profile,
+  Travel preferences, Settings and Sign out. On mobile it's a drawer. A conversation can
+  be deleted from its header.
+- **Bookings** (`/bookings`): Upcoming / Completed / Cancelled tabs. Cards show type,
+  destination, dates, status badge (CONFIRMED / PENDING / CANCELLED / FAILED),
+  confirmation number, price and a "Test booking" label.
+- **Booking page** (`/bookings/{id}`): full details (flight times, hotel address, refund,
+  payment status, date changes) plus **Change dates** and **Cancel booking**. Both show
+  the provider's quote in the confirmation dialog first.
+- **Assistant prompt:** search results now appear only as cards; the model summarises in
+  two or three sentences and never prints offer ids.
+
+Checked in the browser against the running API with real Gemini (desktop, plus mobile
+375px in light and dark mode):
+- **Questions:** "What is my flight number?" answered from the ticket with its source chip.
+- **Hotel:** London search showed 5 hotel cards; Select → confirmation card → dialog
+  (hotel, dates, traveller from the passport, CHF 374.54) → Confirm booked it (ref
+  MKXZVGM4). The conversation showed the outcome and a booking card.
+- **Bookings pages:** the booking appeared under Upcoming; Cancel booking on its page
+  showed the refund quote, and confirming moved it to Cancelled with the refund shown.
+- **Flights (Duffel sandbox):** a London search took the origin from the profile and
+  showed 5 real flight cards.
+- **Bugs fixed during the check:**
+  - the model repeated every offer (with internal ids) in its text;
+  - booking cards overflowed the screen at phone width;
+  - the Select buttons had no distinguishing accessible label.
 
 **Already partly covering later phases:** auth rate limiting (in-memory, per process;
 Redis comes in phase 9), audit logging, request IDs, CI (`.github/workflows/platform-ci.yml`:

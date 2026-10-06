@@ -20,8 +20,8 @@ start phase N."*
 | 5 | Flight, hotel, car, excursion and document agents | Done | |
 | 6 | Mock booking providers, search/book/cancel/modify, confirmations | Done | |
 | 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | Done | |
-| 8 | Chat UI, booking UI, cards, confirmation dialogs | **Next** | |
-| 9 | Security hardening, Redis rate limiting, admin panel | Planned | |
+| 8 | Chat UI, booking UI, cards, confirmation dialogs | Done | |
+| 9 | Security hardening, Redis rate limiting, admin panel | **Next** | |
 | 10 | Integration + E2E tests, CI/CD completion | Planned | |
 | 11 | Deployment, monitoring, final docs, retire the old app | Planned | |
 
@@ -70,8 +70,14 @@ cd frontend
 npm run lint && npm run typecheck && npm run build
 ```
 
-- **Dev servers:** `.claude/launch.json` defines `platform-api` (uvicorn on **port 8100**;
-  port 8000 is taken by the old app) and `platform-web` (Next.js on 3000).
+- **Dev servers:** `.claude/launch.json` (git-ignored) defines `platform-api` (uvicorn on
+  **port 8100**; port 8000 is taken by the old app) and `platform-web` (Next.js on 3000).
+  For browser checks with real Gemini there's also `platform-api-gemini` (port 8101; it
+  reads the key from the root `.env` at start-up without copying it) and
+  `platform-web-8101` (`next build` + `next start` on 3001). The second web config
+  exists because only one `next dev` may run per folder, and another session often
+  holds port 3000. Stopping it from the preview tools can leave the `next start` node
+  process running; kill it before restarting.
   `frontend/.env.local` points `BACKEND_URL` at port 8100. The API has no `--reload`, so
   restart it after backend changes.
 - **`backend/.env`** (git-ignored) holds `APP_ENV=development`, an absolute SQLite
@@ -132,8 +138,15 @@ backend/
                               fake_llm.py (ScriptedLLM with call(), reply(), intent())
 frontend/
   app/(auth)/                 login, register
-  app/(app)/                  layout (sidebar shell), home, profile, preferences,
-                              settings, documents, documents/[id]
+  app/(app)/                  layout (sidebar shell), page (new chat), chat/[id],
+                              bookings, bookings/[id], profile, preferences, settings,
+                              documents, documents/[id]
+  components/chat/            chat-view (messages, optimistic send, upload), cards
+                              (sources, offers, bookings, confirmations), rich-text
+  components/bookings/        confirmation-dialog (the only caller of /chat/confirm),
+                              booking-status
+  lib/                        format.ts (money, dates), bookings.ts (labels, tabs),
+                              setup.ts (account set-up steps)
   app/api/[...path]/route.ts  proxy to BACKEND_URL (keeps cookies first-party)
   proxy.ts                    redirects signed-out users (Next 16 "proxy" = middleware)
   lib/api.ts                  api() + uploadFile() (XHR progress), CSRF header
@@ -440,7 +453,21 @@ Tests: `tests/test_duffel.py`, `tests/test_booking_safety.py`.
 
 ---
 
-## 9. Phase 8: frontend chat and bookings (§31, §33–35, §55–56)
+## 9. Phase 8: frontend chat and bookings (done)
+
+**As built:** as planned below.
+- **Routes:** `/` is a new chat and `/chat/[id]` an existing one. The first reply
+  seeds the new conversation's query cache, then `router.replace`s there.
+- **Confirmation cards** are actionable only in the latest message and before
+  `expires_at`.
+- **Select** sends "I'd like this one: <title>, <date>, <price> (offer_id: …)" so the
+  model can call `book_*` with the exact id.
+- **Tabs and buttons:** no Tabs component; the tabs are buttons with
+  `role=tab`/`aria-selected`. Base UI buttons rendered as links need
+  `nativeButton={false}`.
+- **Card lists** use `grid-cols-1` so truncated text can't widen the column on mobile.
+
+### Original phase 8 plan
 
 - **Chat page** (make it the home page; move the set-up checklist to a banner):
   - Header "AI Travel Assistant", subtitle "Flights, hotels, cars, documents and travel

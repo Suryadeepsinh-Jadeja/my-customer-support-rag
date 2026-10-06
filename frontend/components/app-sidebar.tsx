@@ -1,11 +1,14 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import {
+  CalendarCheck,
   FileText,
-  Home,
   LogOut,
   Menu,
+  MessageSquare,
   Plane,
+  Plus,
   Settings,
   SlidersHorizontal,
   UserRound,
@@ -18,13 +21,13 @@ import { useEffect, useState } from "react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useSignOut } from "@/hooks/use-current-user";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { User } from "@/types/api";
+import type { Conversation, User } from "@/types/api";
 
-// Conversations and Bookings join this list as their phases land.
 const NAV = [
-  { href: "/", label: "Home", icon: Home },
   { href: "/documents", label: "Documents", icon: FileText },
+  { href: "/bookings", label: "Bookings", icon: CalendarCheck },
   { href: "/profile", label: "Profile", icon: UserRound },
   { href: "/preferences", label: "Travel preferences", icon: SlidersHorizontal },
   { href: "/settings", label: "Settings", icon: Settings },
@@ -36,12 +39,49 @@ function initials(name: string, email: string) {
   return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase();
 }
 
+const link =
+  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
+
+function Conversations({ onNavigate }: { onNavigate?: () => void }) {
+  const pathname = usePathname();
+  const { data: conversations } = useQuery({
+    queryKey: ["conversations"],
+    queryFn: () => api<Conversation[]>("/conversations"),
+  });
+  if (!conversations?.length) return null;
+  return (
+    <div className="grid min-h-0 gap-1">
+      <p className="px-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Conversations
+      </p>
+      <ul className="grid gap-0.5 overflow-y-auto">
+        {conversations.slice(0, 30).map((c) => {
+          const active = pathname === `/chat/${c.id}`;
+          return (
+            <li key={c.id}>
+              <Link
+                href={`/chat/${c.id}`}
+                onClick={onNavigate}
+                aria-current={active ? "page" : undefined}
+                className={cn(link, "py-1.5", active && "bg-muted font-medium text-foreground")}
+              >
+                <MessageSquare className="size-4 shrink-0" aria-hidden />
+                <span className="truncate">{c.title}</span>
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 function SidebarContent({ user, onNavigate }: { user: User; onNavigate?: () => void }) {
   const pathname = usePathname();
   const signOut = useSignOut();
 
   return (
-    <div className="flex h-full flex-col gap-6 p-4">
+    <div className="flex h-full flex-col gap-5 overflow-hidden p-4">
       <Link href="/" onClick={onNavigate} className="flex items-center gap-2 px-2 font-semibold">
         <span className="grid size-8 place-items-center rounded-lg bg-primary text-primary-foreground">
           <Plane className="size-4" aria-hidden />
@@ -49,19 +89,25 @@ function SidebarContent({ user, onNavigate }: { user: User; onNavigate?: () => v
         AI Travel Assistant
       </Link>
 
+      <Button
+        render={<Link href="/" onClick={onNavigate} />}
+        nativeButton={false}
+        variant={pathname === "/" ? "secondary" : "outline"}
+        className="justify-start"
+      >
+        <Plus aria-hidden /> New conversation
+      </Button>
+
       <nav aria-label="Main" className="grid gap-1">
         {NAV.map(({ href, label, icon: Icon }) => {
-          const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+          const active = pathname.startsWith(href);
           return (
             <Link
               key={href}
               href={href}
               onClick={onNavigate}
               aria-current={active ? "page" : undefined}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-                active && "bg-muted font-medium text-foreground",
-              )}
+              className={cn(link, active && "bg-muted font-medium text-foreground")}
             >
               <Icon className="size-4" aria-hidden />
               {label}
@@ -69,6 +115,8 @@ function SidebarContent({ user, onNavigate }: { user: User; onNavigate?: () => v
           );
         })}
       </nav>
+
+      <Conversations onNavigate={onNavigate} />
 
       <div className="mt-auto grid gap-3 border-t pt-4">
         <div className="flex items-center gap-3 px-2">
