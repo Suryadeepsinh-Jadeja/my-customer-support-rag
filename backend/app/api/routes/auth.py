@@ -13,9 +13,9 @@ from app.services.auth_service import AuthService, IssuedToken
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-def _limit(request: Request) -> str:
+async def _limit(request: Request) -> str:
     ip = rate_limit.client_ip(request)
-    rate_limit.enforce("auth", ip, get_settings().AUTH_RATE_LIMIT_PER_MINUTE)
+    await rate_limit.enforce("auth", ip, get_settings().AUTH_RATE_LIMIT_PER_MINUTE)
     return ip
 
 
@@ -53,7 +53,7 @@ def _auth_response(response: Response, issued: IssuedToken) -> AuthResponse:
              summary="Create an account and sign in")
 async def register(body: RegisterRequest, request: Request, response: Response,
                    db: AsyncSession = Depends(get_db)):
-    ip = _limit(request)
+    ip = await _limit(request)
     issued = await AuthService(db).register(body.email, body.password, body.full_name, ip)
     return _auth_response(response, issued)
 
@@ -61,7 +61,7 @@ async def register(body: RegisterRequest, request: Request, response: Response,
 @router.post("/login", response_model=AuthResponse, summary="Sign in with email and password")
 async def login(body: LoginRequest, request: Request, response: Response,
                 db: AsyncSession = Depends(get_db)):
-    ip = _limit(request)
+    ip = await _limit(request)
     issued = await AuthService(db).login(body.email, body.password, ip)
     return _auth_response(response, issued)
 

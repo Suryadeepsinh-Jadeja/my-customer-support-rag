@@ -13,11 +13,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents import supervisor
+from app.agents.pii import IDENTIFIERS, mask_identifiers
 from app.agents.prompts import SUMMARY_PROMPT
 from app.agents.tools import ToolContext
 from app.core.errors import NotFoundError
 from app.db.base import utcnow
-from app.db.models import Conversation, Message, User
+from app.db.models import Conversation, ExtractedEntity, Message, User
 from app.services import audit_service
 from app.services.llm_service import (
     ChatTurn,
@@ -108,7 +109,7 @@ class ChatService:
             agent, intent = await supervisor.route(llm, history, conversation.active_agent)
             reply = await supervisor.run_agent(llm, ctx, agent, list(history),
                                                summary=conversation.summary, intent=intent)
-            answer = reply.text
+            answer = mask_identifiers(reply.text, text, await self._identifiers())
             payload = {"type": message_type(ctx), "sources": ctx.sources,
                        "cards": ctx.cards, "agent": agent}
             conversation.active_agent = agent
@@ -126,6 +127,13 @@ class ChatService:
         conversation.updated_at = utcnow()
         await self.session.commit()
         return conversation, message
+
+    async def _identifiers(self) -> list[tuple[str, str]]:
+        rows = await self.session.execute(
+            select(ExtractedEntity.field, ExtractedEntity.value).where(
+                ExtractedEntity.user_id == self.user.id,
+                ExtractedEntity.field.in_(list(IDENTIFIERS))))
+        return [(f, v) for f, v in rows.all()]
 
     async def _history(self, conversation: Conversation) -> list[ChatTurn]:
         """Recent messages for the model, summarising older ones when needed."""

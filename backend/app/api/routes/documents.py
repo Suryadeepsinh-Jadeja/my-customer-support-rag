@@ -36,7 +36,7 @@ async def _detail(db: AsyncSession, service: DocumentService,
 
 async def _upload(request: Request, file: UploadFile, user: User, db: AsyncSession):
     settings = get_settings()
-    rate_limit.enforce("upload", str(user.id), settings.UPLOAD_RATE_LIMIT_PER_HOUR, 3600)
+    await rate_limit.enforce("upload", str(user.id), settings.UPLOAD_RATE_LIMIT_PER_HOUR, 3600)
     # Read at most one byte past the limit; the body-size middleware stops larger requests
     # before they are buffered.
     data = await file.read(settings.max_upload_bytes + 1)

@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routes import auth, bookings, chat, documents, health, search, users
+from app.api.routes import admin, auth, bookings, chat, documents, health, search, users
 from app.core.config import get_settings
 from app.core.errors import register_error_handlers
 from app.core.logging import configure_logging, logger
@@ -63,6 +63,7 @@ def create_app() -> FastAPI:
     api.include_router(search.router)
     api.include_router(chat.router)
     api.include_router(bookings.router)
+    api.include_router(admin.router)
     api.add_api_route("/health", health.health, methods=["GET"], tags=["health"],
                       summary="Liveness (same as /health)")
     app.include_router(api)

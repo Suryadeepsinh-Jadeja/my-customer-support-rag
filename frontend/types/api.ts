@@ -304,3 +304,51 @@ export type ConfirmResponse = {
   message: AssistantMessage;
   booking: Booking | null;
 };
+
+// ------------------------------------------------------------------- admin
+
+export type AdminOverview = {
+  ready: { status: string; checks: Record<string, { ok: boolean } & Record<string, unknown>> };
+  counts: Record<string, number>;
+  users: {
+    id: string;
+    email: string;
+    role: string;
+    is_active: boolean;
+    created_at: string;
+    last_login_at: string | null;
+    documents: number;
+    bookings: number;
+    conversations: number;
+  }[];
+  documents_by_status: Record<string, number>;
+  failed_documents: {
+    id: string;
+    owner: string;
+    document_type: string | null;
+    status: string;
+    error_code: string | null;
+    created_at: string;
+  }[];
+  bookings: {
+    id: string;
+    owner: string;
+    kind: BookingKind;
+    provider: string;
+    status: BookingStatus;
+    reference: string | null;
+    total_amount: number;
+    currency: string;
+    error_code: string | null;
+    created_at: string;
+  }[];
+  tools: { tool: string; calls: number; errors: number; avg_latency_ms: number }[];
+  tool_errors: { tool: string; error_code: string | null; latency_ms: number; created_at: string }[];
+  failed_jobs: {
+    id: string;
+    kind: string;
+    attempts: number;
+    last_error: string | null;
+    updated_at: string;
+  }[];
+};

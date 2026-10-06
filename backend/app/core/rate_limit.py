@@ -1,23 +1,23 @@
 """Sliding-window rate limiting.
 
-`InMemoryRateLimiter` is per process. With several API workers or instances, swap in a
-Redis-backed implementation of `RateLimiter` (planned with the Redis service in phase 9).
+With `REDIS_URL` set (production, Docker), limits are shared by every API process and
+instance through Redis sorted sets. Without it (local development, tests) an in-process
+limiter is used. If Redis is unreachable, requests are allowed and a warning is logged:
+an outage of the limiter must not take sign-in down.
 """
 
+import logging
+import secrets
 import threading
 import time
 from collections import deque
-from typing import Protocol
 
 from fastapi import Request
 
+from app.core.config import get_settings
 from app.core.errors import RateLimitedError
 
-
-class RateLimiter(Protocol):
-    def hit(self, key: str, limit: int, window_seconds: int) -> float | None:
-        """Record a hit. Return None if allowed, else seconds until the next allowed hit."""
-        ...
+logger = logging.getLogger("travel.rate_limit")
 
 
 class InMemoryRateLimiter:
@@ -25,7 +25,8 @@ class InMemoryRateLimiter:
         self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
 
-    def hit(self, key: str, limit: int, window_seconds: int) -> float | None:
+    async def hit(self, key: str, limit: int, window_seconds: int) -> float | None:
+        """Record a hit. None if allowed, else seconds until the next allowed hit."""
         now = time.monotonic()
         with self._lock:
             hits = self._hits.setdefault(key, deque())
@@ -44,7 +45,41 @@ class InMemoryRateLimiter:
             self._hits.clear()
 
 
-limiter: RateLimiter = InMemoryRateLimiter()
+class RedisRateLimiter:
+    def __init__(self, client) -> None:
+        self.redis = client
+
+    async def hit(self, key: str, limit: int, window_seconds: int) -> float | None:
+        name = f"ratelimit:{key}"
+        now = time.time()
+        member = f"{now:.6f}-{secrets.token_hex(4)}"
+        try:
+            async with self.redis.pipeline(transaction=True) as pipe:
+                pipe.zremrangebyscore(name, 0, now - window_seconds)
+                pipe.zadd(name, {member: now})
+                pipe.zcard(name)
+                pipe.zrange(name, 0, 0, withscores=True)
+                pipe.expire(name, window_seconds)
+                _, _, count, oldest, _ = await pipe.execute()
+            if count <= limit:
+                return None
+            await self.redis.zrem(name, member)  # a refused hit doesn't count
+            return float(oldest[0][1]) + window_seconds - now
+        except Exception as exc:  # fail open
+            logger.warning("rate limiter unavailable", extra={"error": type(exc).__name__})
+            return None
+
+
+def _build():
+    url = get_settings().REDIS_URL
+    if not url:
+        return InMemoryRateLimiter()
+    import redis.asyncio as redis
+
+    return RedisRateLimiter(redis.from_url(url))
+
+
+limiter: InMemoryRateLimiter | RedisRateLimiter = _build()
 
 
 def client_ip(request: Request) -> str:
@@ -52,7 +87,7 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 
-def enforce(scope: str, key: str, limit: int, window_seconds: int = 60) -> None:
-    retry_after = limiter.hit(f"{scope}:{key}", limit, window_seconds)
+async def enforce(scope: str, key: str, limit: int, window_seconds: int = 60) -> None:
+    retry_after = await limiter.hit(f"{scope}:{key}", limit, window_seconds)
     if retry_after is not None:
         raise RateLimitedError(headers={"Retry-After": str(max(1, int(retry_after) + 1))})

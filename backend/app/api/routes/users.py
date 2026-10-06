@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_user
-from app.api.routes.auth import set_auth_cookies
+from app.api.routes.auth import clear_auth_cookies, set_auth_cookies
 from app.core import rate_limit
 from app.core.config import get_settings
 from app.core.errors import InvalidRequestError
@@ -11,6 +11,7 @@ from app.db.models import User
 from app.schemas.user import (
     AuthResponse,
     ChangePasswordRequest,
+    DeleteAccountRequest,
     PreferencesUpdate,
     ProfileUpdate,
     UserOut,
@@ -64,13 +65,27 @@ async def update_preferences(body: PreferencesUpdate, request: Request,
     return user
 
 
+@router.delete("/me", status_code=204,
+               summary="Delete your account, documents, conversations and bookings")
+async def delete_account(body: DeleteAccountRequest, request: Request, response: Response,
+                         user: User = Depends(get_current_user),
+                         db: AsyncSession = Depends(get_db)):
+    """Needs your password. Upcoming bookings must be cancelled first. The anonymised audit
+    log is kept."""
+    ip = rate_limit.client_ip(request)
+    await rate_limit.enforce("auth", ip, get_settings().AUTH_RATE_LIMIT_PER_MINUTE)
+    await AuthService(db).delete_account(user, body.password, ip)
+    clear_auth_cookies(response)
+    response.status_code = 204
+
+
 @router.post("/me/password", response_model=AuthResponse,
              summary="Change password (signs out other devices)")
 async def change_password(body: ChangePasswordRequest, request: Request, response: Response,
                           user: User = Depends(get_current_user),
                           db: AsyncSession = Depends(get_db)):
     ip = rate_limit.client_ip(request)
-    rate_limit.enforce("auth", ip, get_settings().AUTH_RATE_LIMIT_PER_MINUTE)
+    await rate_limit.enforce("auth", ip, get_settings().AUTH_RATE_LIMIT_PER_MINUTE)
     issued = await AuthService(db).change_password(user, body.current_password,
                                                    body.new_password, ip)
     csrf = set_auth_cookies(response, issued)

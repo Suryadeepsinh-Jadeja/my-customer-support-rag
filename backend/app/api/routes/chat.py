@@ -7,6 +7,7 @@ from app.api.deps import get_current_user
 from app.api.idempotency import idempotent
 from app.api.routes.bookings import BOOKING_RATE_LIMIT_PER_MINUTE
 from app.core import rate_limit
+from app.core.config import get_settings
 from app.db.database import get_db
 from app.db.models import User
 from app.schemas.booking import BookingOut, ConfirmRequest, ConfirmResponse
@@ -31,7 +32,10 @@ async def chat(body: ChatRequest, user: User = Depends(get_current_user),
                db: AsyncSession = Depends(get_db)):
     """Starts a conversation when `conversation_id` is omitted. Answers use your documents,
     the policy knowledge base and your profile, with the sources they came from."""
-    rate_limit.enforce("chat", str(user.id), CHAT_RATE_LIMIT_PER_MINUTE, 60)
+    await rate_limit.enforce("chat", str(user.id), CHAT_RATE_LIMIT_PER_MINUTE, 60)
+    # Each message can make several Gemini calls: cap the hourly volume too.
+    await rate_limit.enforce("chat-hour", str(user.id),
+                             get_settings().CHAT_RATE_LIMIT_PER_HOUR, 3600)
     conversation, message = await ChatService(db, user).send(body.conversation_id,
                                                              body.message)
     p = message.payload
@@ -49,7 +53,7 @@ async def confirm(body: ConfirmRequest, request: Request,
     """The only way a sensitive action runs. The request must belong to you, still be
     pending and not have expired (10 minutes); each one can be used once. Supports
     `Idempotency-Key`: a retry with the same key returns the same result."""
-    rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
+    await rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
 
     async def run() -> ConfirmResponse:
         outcome = await BookingService(db, user).confirm(body.confirmation_id, body.approved)

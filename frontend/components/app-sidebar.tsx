@@ -10,6 +10,7 @@ import {
   Plane,
   Plus,
   Settings,
+  ShieldCheck,
   SlidersHorizontal,
   UserRound,
   X,
@@ -99,7 +100,7 @@ function SidebarContent({ user, onNavigate }: { user: User; onNavigate?: () => v
       </Button>
 
       <nav aria-label="Main" className="grid gap-1">
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {[...NAV, ...(user.role === "admin" ? [{ href: "/admin", label: "Admin", icon: ShieldCheck }] : [])].map(({ href, label, icon: Icon }) => {
           const active = pathname.startsWith(href);
           return (
             <Link

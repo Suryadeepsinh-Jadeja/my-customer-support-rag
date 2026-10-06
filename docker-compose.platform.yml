@@ -27,8 +27,11 @@ x-backend: &backend
     WORKER_MODE: external
     MALWARE_SCANNER: ${MALWARE_SCANNER:-none}
     CLAMAV_HOST: clamav
+    REDIS_URL: redis://redis:6379/0
   depends_on: &backend-deps
     postgres:
+      condition: service_healthy
+    redis:
       condition: service_healthy
     minio-init:
       condition: service_completed_successfully
@@ -48,6 +51,16 @@ services:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
       timeout: 5s
+      retries: 20
+
+  # Shared rate limits for every API process.
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
       retries: 20
 
   minio:

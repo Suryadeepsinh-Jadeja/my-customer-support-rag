@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -10,6 +11,7 @@ from app.core.errors import (
     AccountLockedError,
     ConflictError,
     InvalidCredentialsError,
+    ServiceUnavailableError,
 )
 from app.core.security import (
     create_access_token,
@@ -17,9 +19,10 @@ from app.core.security import (
     password_needs_rehash,
     verify_password,
 )
-from app.db.models import User
+from app.db.models import Booking, BookingStatus, Document, User
 from app.db.repositories.user_repository import UserRepository
 from app.services import audit_service
+from app.services.storage import StorageError, get_storage
 
 
 @dataclass
@@ -108,3 +111,35 @@ class AuthService:
                                    ip_address=ip)
         await self.session.commit()
         return _issue(user)
+
+    async def delete_account(self, user: User, password: str, ip: str) -> None:
+        """Delete the account, its files and all its data (database cascades). The audit
+        log is kept, with the user reference set to NULL."""
+        if not verify_password(user.password_hash, password):
+            await audit_service.record(self.session, "user.delete", user_id=user.id,
+                                       status="failure", ip_address=ip)
+            await self.session.commit()
+            raise InvalidCredentialsError("The password is incorrect.")
+        upcoming = (await self.session.execute(
+            select(func.count()).select_from(Booking).where(
+                Booking.user_id == user.id,
+                Booking.status.in_([BookingStatus.CONFIRMED, BookingStatus.MODIFIED]),
+                Booking.travel_date >= datetime.now(UTC).date())
+        )).scalar_one()
+        if upcoming:
+            raise ConflictError("Cancel your upcoming bookings before deleting your account.")
+
+        keys = list((await self.session.execute(
+            select(Document.storage_key).where(Document.user_id == user.id))).scalars())
+        storage = get_storage()
+        try:  # files first: if storage is down nothing is deleted and the user can retry
+            for key in keys:
+                await storage.delete(key)
+        except StorageError as exc:
+            raise ServiceUnavailableError(
+                "We couldn't delete your files. Please try again.") from exc
+        await audit_service.record(self.session, "user.delete", user_id=user.id,
+                                   ip_address=ip, details={"documents": len(keys)})
+        await self.session.flush()
+        await self.session.delete(user)
+        await self.session.commit()

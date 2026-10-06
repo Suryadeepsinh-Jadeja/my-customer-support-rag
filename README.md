@@ -51,8 +51,8 @@ git checkout rebuild
 
 ## 3. Option A: run everything with Docker
 
-This starts PostgreSQL (with pgvector), MinIO (file storage), the backend, a background
-worker and the frontend.
+This starts PostgreSQL (with pgvector), MinIO (file storage), Redis (shared rate limits),
+the backend, a background worker and the frontend.
 
 1. Create the backend settings file:
 
@@ -208,6 +208,14 @@ python -m app.cli promote someone@example.com        # make an existing user an 
 With Docker:
 `docker compose -f docker-compose.platform.yml exec backend python -m app.cli create-admin admin@example.com`
 
+Sign in as that user and open **Admin** in the sidebar. It shows system health, users,
+document processing, bookings, assistant tool usage and recent errors, but never document
+contents or unmasked identifiers.
+
+Users can delete their own account under **Settings → Delete account**. They need their
+password and must cancel upcoming bookings first. Their files and data are removed; the
+audit log is kept with the user reference cleared.
+
 ## 7. Run the checks
 
 ```bash
@@ -239,6 +247,9 @@ likely to change:
 | `STORAGE_BACKEND` | `local` | `s3` for any S3-compatible store (set the `OBJECT_STORAGE_*` values) |
 | `WORKER_MODE` | `inline` | `external` to process documents with `python -m app.worker` |
 | `MALWARE_SCANNER` | `none` | `clamav` to scan uploads with ClamAV |
+| `REDIS_URL` | none | e.g. `redis://localhost:6379/0` to share rate limits between API processes (Docker sets it). Without it, limits are per process |
+| `CHAT_RATE_LIMIT_PER_HOUR` | `200` | Chat messages per user per hour (there's also a fixed 30 per minute) |
+| `AUTH_RATE_LIMIT_PER_MINUTE` / `UPLOAD_RATE_LIMIT_PER_HOUR` | `10` / `30` | Sign-in attempts per IP, uploads per user |
 
 ## 9. Troubleshooting
 
@@ -249,6 +260,7 @@ likely to change:
 | Policy answers find nothing | The knowledge base wasn't loaded: run `python -m app.rag.ingest ../knowledge_base` in `backend/`. |
 | `no such table` errors | Run `alembic upgrade head` in `backend/` (and check `DATABASE_URL` points at the same file). |
 | Frontend shows network errors | Check the API is running and `BACKEND_URL` in `frontend/.env.local` matches its port. |
+| `429 Too many requests` | A rate limit was hit; wait for the `Retry-After` seconds, or raise the limit in `backend/.env` for local testing. |
 | Port 8000 already in use | Start the API with `--port 8100` and set `BACKEND_URL=http://127.0.0.1:8100`. |
 | `Another next dev server is already running` | Only one `npm run dev` can run per `frontend/` folder. Stop the other one, or use `npx next build && npx next start -p 3001` for a second copy. |
 | Flight booking fails: "needs each traveller's date of birth and gender" | You're using Duffel: upload the traveller's passport, and add a phone number to your profile. |

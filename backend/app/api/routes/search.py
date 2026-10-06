@@ -37,7 +37,7 @@ class SearchHit(BaseModel):
              summary="Search your documents and/or the travel policy knowledge base")
 async def search(body: SearchRequest, user: User = Depends(get_current_user),
                  db: AsyncSession = Depends(get_db)):
-    rate_limit.enforce("search", str(user.id), 60, 60)
+    await rate_limit.enforce("search", str(user.id), 60, 60)
     vector = await query_vector(body.query)  # embed once for both scopes
     hits = []
     if body.scope in ("documents", "all"):

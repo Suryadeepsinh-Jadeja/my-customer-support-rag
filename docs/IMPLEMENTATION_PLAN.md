@@ -21,8 +21,8 @@ start phase N."*
 | 6 | Mock booking providers, search/book/cancel/modify, confirmations | Done | |
 | 7 | Real flight provider (Duffel), price revalidation, idempotency, state machine, payments | Done | |
 | 8 | Chat UI, booking UI, cards, confirmation dialogs | Done | |
-| 9 | Security hardening, Redis rate limiting, admin panel | **Next** | |
-| 10 | Integration + E2E tests, CI/CD completion | Planned | |
+| 9 | Security hardening, Redis rate limiting, admin panel | Done | |
+| 10 | Integration + E2E tests, CI/CD completion | **Next** | |
 | 11 | Deployment, monitoring, final docs, retire the old app | Planned | |
 
 - **Repository:** https://github.com/Suryadeepsinh-Jadeja/my-customer-support-rag, branch
@@ -86,6 +86,8 @@ npm run lint && npm run typecheck && npm run build
 - **Duffel test key:** in `backend/.env` (`FLIGHT_PROVIDER=duffel`,
   `DUFFEL_API_KEY=duffel_test_...`), so the local dev app books flights in Duffel's
   sandbox. Real orders need a passport upload and a profile phone number.
+- **Test accounts:** to try the admin page locally, promote an account with
+  `python -m app.cli promote <email>` (from `backend/`).
 - **Gemini key:** the user's key is in the old app's root `.env` (`GEMINI_API_KEY`,
   model `gemini-3.5-flash-lite`). For one-off live checks, export it for that command only:
   `export GEMINI_API_KEY="$(grep '^GEMINI_API_KEY=' ../.env | cut -d= -f2- | tr -d '\r"')"`.
@@ -492,7 +494,24 @@ Tests: `tests/test_duffel.py`, `tests/test_booking_safety.py`.
 
 ---
 
-## 10. Phase 9: security hardening and admin (§21, §48–49, §52–53, §64–66)
+## 10. Phase 9: security hardening and admin (done)
+
+**As built:** as planned below, with these choices:
+- `rate_limit.enforce()` is now **async** (`await rate_limit.enforce(...)`).
+  `RedisRateLimiter` is used when `REDIS_URL` is set and fails open. Tests use the
+  in-memory limiter, plus fakeredis for the Redis one.
+- The admin panel is one endpoint (`/api/admin/overview`) and one page (`/admin`).
+- Account deletion refuses while confirmed future bookings exist, because the provider
+  bookings would be orphaned.
+- Identifier masking lives in `app/agents/pii.py` and is applied in
+  `ChatService.send`.
+- Prompt-injection protection is structural: proposals only, no confirm tool,
+  per-specialist tool lists, untrusted-data wrapping. It is tested in
+  `tests/test_security.py`. The supervisor doesn't gate booking tools on intent: too
+  brittle for follow-ups like "the first one".
+- `Result.tuples()` is deprecated in SQLAlchemy 2.1: unpack rows directly.
+
+### Original phase 9 plan (§21, §48–49, §52–53, §64–66)
 
 - **Rate limiting:** move from the in-memory limiter to Redis (add `redis` to compose).
   Keep the same `enforce()` API, swapping the backend in `rate_limit.py`. Limits for

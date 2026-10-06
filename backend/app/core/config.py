@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     LOGIN_MAX_ATTEMPTS: int = Field(default=5, ge=1)
     LOGIN_LOCKOUT_MINUTES: int = Field(default=15, ge=1)
     AUTH_RATE_LIMIT_PER_MINUTE: int = Field(default=10, ge=1)
+    # Shared rate limits across API processes; in-process limits when empty.
+    REDIS_URL: str = ""
+    CHAT_RATE_LIMIT_PER_HOUR: int = Field(default=200, ge=1)
 
     LOG_LEVEL: str = "INFO"
     LOG_FORMAT: Literal["json", "text"] | None = None

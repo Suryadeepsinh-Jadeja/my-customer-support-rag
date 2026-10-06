@@ -6,6 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
+from app.core import rate_limit
 from app.core.config import get_settings
 from app.db.database import get_engine
 from app.services.malware import get_scanner
@@ -21,8 +22,8 @@ async def health():
     return {"status": "ok"}
 
 
-@router.get("/ready", summary="Readiness: dependencies are reachable and configured")
-async def ready():
+async def readiness() -> dict:
+    """{"status": "ready" | "not_ready", "checks": {...}}; also shown in the admin panel."""
     settings = get_settings()
     checks: dict[str, dict] = {}
 
@@ -52,6 +53,21 @@ async def ready():
     checks["llm"] = {"ok": True, "configured": bool(settings.GEMINI_API_KEY)}
     checks["worker"] = {"ok": True, "mode": settings.WORKER_MODE}
 
-    ready_ = all(c["ok"] for c in checks.values())
-    return JSONResponse(status_code=200 if ready_ else 503,
-                        content={"status": "ready" if ready_ else "not_ready", "checks": checks})
+    if isinstance(rate_limit.limiter, rate_limit.RedisRateLimiter):
+        try:
+            await rate_limit.limiter.redis.ping()
+            checks["rate_limiter"] = {"ok": True, "backend": "redis"}
+        except Exception:
+            logger.warning("readiness: redis unavailable")
+            checks["rate_limiter"] = {"ok": False, "backend": "redis"}
+    else:
+        checks["rate_limiter"] = {"ok": True, "backend": "memory"}
+
+    ok = all(c["ok"] for c in checks.values())
+    return {"status": "ready" if ok else "not_ready", "checks": checks}
+
+
+@router.get("/ready", summary="Readiness: dependencies are reachable and configured")
+async def ready():
+    result = await readiness()
+    return JSONResponse(status_code=200 if result["status"] == "ready" else 503, content=result)

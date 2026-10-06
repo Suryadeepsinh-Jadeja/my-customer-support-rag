@@ -44,7 +44,7 @@ async def cancel_booking(booking_id: uuid.UUID, request: Request,
                          db: AsyncSession = Depends(get_db)):
     """Nothing is cancelled yet: the response shows the provider's refund quote; approve it
     with `POST /api/chat/confirm`. Supports `Idempotency-Key`."""
-    rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
+    await rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
 
     async def run() -> ConfirmationOut:
         try:
@@ -63,7 +63,7 @@ async def modify_booking(booking_id: uuid.UUID, body: ModifyRequest, request: Re
                          user: User = Depends(get_current_user),
                          db: AsyncSession = Depends(get_db)):
     """Supports `Idempotency-Key`."""
-    rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
+    await rate_limit.enforce("booking", str(user.id), BOOKING_RATE_LIMIT_PER_MINUTE, 60)
 
     async def run() -> ConfirmationOut:
         try:

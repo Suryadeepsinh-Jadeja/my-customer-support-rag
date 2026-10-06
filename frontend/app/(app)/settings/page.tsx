@@ -7,6 +7,7 @@ import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
+import { DeleteAccount } from "@/components/delete-account";
 import { FormField } from "@/components/form-field";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -107,6 +108,18 @@ export default function SettingsPage() {
               <LogOut aria-hidden />
               Sign out everywhere
             </Button>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Delete account</CardTitle>
+            <CardDescription>
+              Permanently delete your account, documents, conversations and bookings history.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <DeleteAccount />
           </CardContent>
         </Card>
       </div>
