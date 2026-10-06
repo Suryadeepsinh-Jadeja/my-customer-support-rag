@@ -10,17 +10,21 @@ from app.db.models.document import (
     JobStatus,
     ProcessingJob,
 )
+from app.db.models.rag import DocumentChunk, KnowledgeChunk, KnowledgeDocument
 from app.db.models.user import CabinClass, Role, TravelPreference, User, UserProfile
 
 __all__ = [
     "AuditLog",
     "CabinClass",
     "Document",
+    "DocumentChunk",
     "DocumentPage",
     "DocumentStatus",
     "DocumentType",
     "ExtractedEntity",
     "JobStatus",
+    "KnowledgeChunk",
+    "KnowledgeDocument",
     "ProcessingJob",
     "Role",
     "TravelPreference",

@@ -131,6 +131,39 @@ class LLMService:
             raise LLMError("response did not match the schema") from exc
 
 
+    async def embed(self, texts: list[str], *, query: bool = False) -> list[list[float]]:
+        """Unit-length embeddings (768-d). `query=True` for search queries."""
+        from google.genai import types
+
+        from app.db.models.rag import EMBEDDING_DIM
+
+        client = self._get_client()
+        config = types.EmbedContentConfig(
+            task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
+            output_dimensionality=EMBEDDING_DIM,
+        )
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), 100):  # API batch limit
+            try:
+                response = await asyncio.wait_for(
+                    client.aio.models.embed_content(
+                        model=EMBEDDING_MODEL, contents=texts[i:i + 100], config=config
+                    ),
+                    self.timeout,
+                )
+            except Exception as exc:
+                raise LLMError(f"embedding failed: {type(exc).__name__}") from exc
+            for e in response.embeddings or []:
+                norm = sum(x * x for x in e.values or []) ** 0.5 or 1.0
+                vectors.append([x / norm for x in e.values or []])
+        if len(vectors) != len(texts):
+            raise LLMError("embedding count mismatch")
+        return vectors
+
+
+EMBEDDING_MODEL = "gemini-embedding-001"
+
+
 @lru_cache
 def get_llm() -> LLMService:
     settings = get_settings()

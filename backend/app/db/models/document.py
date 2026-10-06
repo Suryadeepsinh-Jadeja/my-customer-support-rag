@@ -22,7 +22,8 @@ from app.db.base import Base, Timestamps, UUIDPk, str_enum
 class DocumentStatus(enum.StrEnum):
     QUEUED = "queued"          # stored, waiting for the worker
     PROCESSING = "processing"
-    EXTRACTED = "extracted"    # text + fields extracted (indexing for the assistant: phase 3)
+    EXTRACTED = "extracted"    # text + fields extracted, not yet indexed (older uploads)
+    READY = "ready"            # extracted and indexed: the assistant can use it
     FAILED = "failed"          # could not be processed; can be retried
     REJECTED = "rejected"      # failed the malware scan; file removed
 
@@ -76,6 +77,7 @@ class Document(UUIDPk, Timestamps, Base):
     scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     text_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     fields_extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    indexed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     pages: Mapped[list["DocumentPage"]] = relationship(
         back_populates="document", cascade="all, delete-orphan", passive_deletes=True,

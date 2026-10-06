@@ -14,15 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import get_settings
 from app.db.models import (
     Document,
+    DocumentChunk,
     DocumentPage,
     DocumentStatus,
     DocumentType,
     ExtractedEntity,
     ProcessingJob,
 )
+from app.rag.chunking import chunk_text
 from app.services import audit_service, jobs
 from app.services.extraction_service import GeminiAnalyzer, RuleAnalyzer, analyze_document
-from app.services.llm_service import get_llm
+from app.services.llm_service import LLMError, get_llm
 from app.services.malware import ScannerUnavailableError, get_scanner
 from app.services.ocr import get_ocr
 from app.services.storage import ObjectNotFoundError, StorageError, get_storage
@@ -31,6 +33,10 @@ from app.services.text_extraction import ExtractionError, extract_pages
 logger = logging.getLogger("travel.documents")
 
 JOB_KIND = "process_document"
+TYPE_LABEL = {"flight_ticket": "Flight ticket", "boarding_pass": "Boarding pass",
+              "hotel_booking": "Hotel booking", "car_booking": "Car rental booking",
+              "insurance": "Travel insurance", "passport": "Passport", "visa": "Visa",
+              "itinerary": "Itinerary", "identity_document": "ID document"}
 # Extraction errors worth retrying (an external OCR service may recover).
 _RETRYABLE_EXTRACTION = {"ocr_failed"}
 
@@ -115,7 +121,25 @@ async def process_document(session: AsyncSession, job: ProcessingJob) -> None:
     document.type_confidence = analysis.type_confidence
     document.analysis_method = method
     document.fields_extracted_at = extracted_at
-    document.status = DocumentStatus.EXTRACTED
+
+    # Index for retrieval: chunk each page and embed (keyword-only without a Gemini key).
+    chunks = [(p.page_number, text) for p in pages for text in chunk_text(p.text)]
+    vectors = None
+    llm = get_llm()
+    if llm.configured and chunks:
+        label = TYPE_LABEL.get(analysis.document_type.value, "Document")
+        try:
+            vectors = await llm.embed([f"{label}: {document.filename}\n{t}" for _, t in chunks])
+        except LLMError as exc:
+            raise jobs.JobError("indexing_failed", retryable=True) from exc
+    await session.execute(delete(DocumentChunk).where(DocumentChunk.document_id == document.id))
+    session.add_all(
+        DocumentChunk(document_id=document.id, user_id=document.user_id, chunk_index=i,
+                      page=page, text=text, embedding=vectors[i] if vectors else None)
+        for i, (page, text) in enumerate(chunks)
+    )
+    document.indexed_at = jobs.now()
+    document.status = DocumentStatus.READY
 
     await audit_service.record(
         session, "document.processed", user_id=document.user_id, actor="system",

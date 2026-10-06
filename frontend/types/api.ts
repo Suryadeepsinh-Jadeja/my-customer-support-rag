@@ -36,7 +36,13 @@ export type User = {
   preferences: Preferences;
 };
 
-export type DocumentStatus = "queued" | "processing" | "extracted" | "failed" | "rejected";
+export type DocumentStatus =
+  | "queued"
+  | "processing"
+  | "extracted"
+  | "ready"
+  | "failed"
+  | "rejected";
 
 export type DocumentType =
   | "passport"
@@ -64,7 +70,13 @@ export type TravelDocument = {
   page_count: number | null;
   ocr_used: boolean;
   created_at: string;
-  steps: { uploaded: boolean; scanned: boolean; text_extracted: boolean; fields_extracted: boolean };
+  steps: {
+    uploaded: boolean;
+    scanned: boolean;
+    text_extracted: boolean;
+    fields_extracted: boolean;
+    indexed: boolean;
+  };
 };
 
 export type ExtractedField = {

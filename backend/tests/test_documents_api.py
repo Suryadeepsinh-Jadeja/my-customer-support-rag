@@ -59,17 +59,19 @@ async def test_pdf_flight_ticket_is_processed(client, user_token):
     assert queued.status_code == 202
     assert queued.json()["status"] == "queued"
     assert queued.json()["steps"] == {"uploaded": True, "scanned": False,
-                                      "text_extracted": False, "fields_extracted": False}
+                                      "text_extracted": False, "fields_extracted": False,
+                                      "indexed": False}
 
     await jobs.run_pending()
     detail = (await client.get(f"/api/documents/{queued.json()['id']}",
                                headers=bearer(user_token))).json()
-    assert detail["status"] == "extracted"
+    assert detail["status"] == "ready"
     assert detail["document_type"] == "flight_ticket"
     assert detail["analysis_method"] == "rules"
     assert detail["page_count"] == 1
     assert detail["steps"] == {"uploaded": True, "scanned": True,
-                               "text_extracted": True, "fields_extracted": True}
+                               "text_extracted": True, "fields_extracted": True,
+                               "indexed": True}
     assert field(detail, "flight_number")["value"] == "LX154"
     assert field(detail, "pnr")["value"] == "X7KQ2P"
     assert field(detail, "departure_airport")["value"] == "BOM"
@@ -153,7 +155,7 @@ async def test_scanned_pdf_uses_ocr(client, user_token, monkeypatch):
 async def test_image_uses_ocr(client, user_token, monkeypatch):
     monkeypatch.setattr(document_processor, "get_ocr", lambda: FakeOcr(samples.PASSPORT_TEXT))
     detail = await upload_and_process(client, user_token, samples.png_bytes(), "scan.png")
-    assert detail["status"] == "extracted"
+    assert detail["status"] == "ready"
     assert detail["document_type"] == "passport"
 
 
@@ -361,14 +363,17 @@ async def test_transient_failure_is_retried_then_marked_failed(client, user_toke
     assert response.status_code == 202 and response.json()["status"] == "queued"
     await jobs.run_pending()
     detail = (await client.get(f"/api/documents/{doc_id}", headers=bearer(user_token))).json()
-    assert detail["status"] == "extracted"
+    assert detail["status"] == "ready"
 
 
-async def test_reprocess_only_for_failed_documents(client, user_token):
+async def test_reprocess_rules(client, user_token):
     doc_id = (await upload(client, user_token, b"fine", "a.txt")).json()["id"]
+    url = f"/api/documents/{doc_id}/reprocess"
+    # Not while it's still queued...
+    assert (await client.post(url, headers=bearer(user_token))).status_code == 409
     await jobs.run_pending()
-    response = await client.post(f"/api/documents/{doc_id}/reprocess", headers=bearer(user_token))
-    assert response.status_code == 409
+    # ...but a finished document can be re-run (e.g. to re-index it).
+    assert (await client.post(url, headers=bearer(user_token))).status_code == 202
 
 
 async def test_job_claimed_only_once(db_session, client, user_token):

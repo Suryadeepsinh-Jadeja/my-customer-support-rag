@@ -135,8 +135,9 @@ class DocumentService:
 
     async def reprocess(self, document_id: uuid.UUID) -> Document:
         document = await self.get(document_id)
-        if document.status != DocumentStatus.FAILED:
-            raise ConflictError("Only documents that failed processing can be retried.")
+        if document.status in (DocumentStatus.QUEUED, DocumentStatus.PROCESSING,
+                               DocumentStatus.REJECTED):
+            raise ConflictError("This document can't be reprocessed right now.")
         document.status = DocumentStatus.QUEUED
         document.error_code = None
         jobs.enqueue(self.session, JOB_KIND, document.id)

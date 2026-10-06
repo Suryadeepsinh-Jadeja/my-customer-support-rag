@@ -24,6 +24,7 @@ ERROR_MESSAGES = {
     "scanner_unavailable": "The security scan is temporarily unavailable.",
     "storage_unavailable": "The file store is temporarily unavailable.",
     "file_missing": "The stored file is missing. Please upload it again.",
+    "indexing_failed": "We couldn't index this file for the assistant. Please try again.",
     "internal_error": "Something went wrong while processing this file.",
 }
 
@@ -56,6 +57,7 @@ class DocumentSteps(BaseModel):
     scanned: bool
     text_extracted: bool
     fields_extracted: bool
+    indexed: bool
 
 
 class DocumentOut(BaseModel):
@@ -125,5 +127,6 @@ def _base(doc: Document) -> dict:
             uploaded=True, scanned=doc.scanned_at is not None,
             text_extracted=doc.text_extracted_at is not None,
             fields_extracted=doc.fields_extracted_at is not None,
+            indexed=doc.indexed_at is not None,
         ),
     }

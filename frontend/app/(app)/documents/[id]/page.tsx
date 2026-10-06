@@ -138,7 +138,7 @@ export default function DocumentDetailPage() {
           </CardContent>
         </Card>
 
-        {doc.status === "extracted" && (
+        {(doc.status === "ready" || doc.status === "extracted") && (
           <Card>
             <CardHeader>
               <CardTitle>Extracted information</CardTitle>
@@ -178,7 +178,7 @@ export default function DocumentDetailPage() {
               <ExternalLink aria-hidden /> Open original
             </a>
           )}
-          {doc.status === "failed" && (
+          {(doc.status === "failed" || doc.status === "extracted") && (
             <Button variant="outline" onClick={() => retry.mutate()} disabled={retry.isPending}>
               {retry.isPending ? <Loader2 className="animate-spin" aria-hidden /> : <RotateCcw aria-hidden />}
               Try again

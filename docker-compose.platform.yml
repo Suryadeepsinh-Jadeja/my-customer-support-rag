@@ -10,7 +10,7 @@
 # With malware scanning (ClamAV needs ~1.5 GB RAM and a few minutes to load signatures):
 #   MALWARE_SCANNER=clamav docker compose -f docker-compose.platform.yml --profile scan up -d
 #
-# The backend applies database migrations on start-up (RUN_MIGRATIONS=true).
+# The backend applies database migrations and ingests ./knowledge_base on start-up.
 
 name: travel-ai-platform
 
@@ -98,6 +98,8 @@ services:
     environment:
       <<: *backend-env
       RUN_MIGRATIONS: "true"
+    volumes:
+      - ./knowledge_base:/app/knowledge_base:ro
     ports:
       - "127.0.0.1:8000:8000"
 

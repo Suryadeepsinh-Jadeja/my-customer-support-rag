@@ -19,7 +19,8 @@ export const TYPE_LABELS: Record<DocumentType, string> = {
 export const STATUS: Record<DocumentStatus, { label: string; tone: "muted" | "info" | "ok" | "bad" }> = {
   queued: { label: "Queued", tone: "muted" },
   processing: { label: "Processing", tone: "info" },
-  extracted: { label: "Processed", tone: "ok" },
+  extracted: { label: "Not indexed", tone: "muted" },
+  ready: { label: "Ready for AI", tone: "ok" },
   failed: { label: "Failed", tone: "bad" },
   rejected: { label: "Rejected", tone: "bad" },
 };
@@ -40,5 +41,6 @@ export function steps(doc: TravelDocument) {
     { label: "Security scan", done: doc.steps.scanned },
     { label: doc.ocr_used ? "Text extracted (OCR)" : "Text extracted", done: doc.steps.text_extracted },
     { label: "Information extracted", done: doc.steps.fields_extracted },
+    { label: "Ready for AI", done: doc.steps.indexed },
   ];
 }

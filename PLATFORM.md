@@ -22,7 +22,7 @@ browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/
 |---|---|---|
 | 1 | Architecture, database, authentication, Docker, basic frontend/backend, health checks | **Done** |
 | 2 | Document upload, object storage, text extraction, OCR, classification, structured extraction | **Done** |
-| 3 | Chunking, embeddings in pgvector, user-document RAG, knowledge-base RAG, hybrid retrieval | Not started |
+| 3 | Chunking, embeddings in pgvector, user-document RAG, knowledge-base RAG, hybrid retrieval | **Done** |
 | 4 | Gemini service, structured output, conversation memory, supervisor agent | Not started |
 | 5 | Flight, hotel, car, excursion and document agents | Not started |
 | 6 | Mock booking providers; flight/hotel/car booking and cancellation | Not started |
@@ -110,6 +110,29 @@ needed yet.
 processing checklist, extracted fields grouped per flight segment with page and confidence,
 "Open original", "Try again" for failures and delete with confirmation.
 
+### What phase 3 delivers
+
+- After extraction, each document's pages are split into ~900-character chunks
+  (paragraph-aware, with overlap, page number kept) and embedded with Gemini
+  `gemini-embedding-001` (768-d). The document then shows **Ready for AI**.
+- The knowledge base (`knowledge_base/*.md`) is loaded with
+  `python -m app.rag.ingest ../knowledge_base` (Docker does this on start-up). Re-runs skip
+  unchanged files, replace changed ones and drop deleted ones; files ingested without a key
+  are embedded on the next run with one. Chunks keep title, section, category, source path
+  and `last_updated`.
+- Hybrid search (`app/rag/retrieval.py`): pgvector cosine similarity (only hits ≥ 0.6
+  count, so unrelated questions return nothing) plus BM25 keyword scores, merged with
+  reciprocal rank fusion. User-document search always filters on the signed-in user.
+  Without a Gemini key it is keyword-only.
+- `POST /api/search` (scope `documents`, `knowledge` or `all`) returns chunks with citation
+  metadata; the assistant uses the same functions in phase 4.
+- Deleting a document deletes its chunks (cascade). Documents uploaded before phase 3 show
+  "Not indexed"; *Try again* re-runs them.
+
+Checked against the real knowledge base with real embeddings: policy questions (baggage,
+refunds, visas, pets, car damage) find the right sections; off-topic questions ("capital of
+France", "pizza recipe") return nothing.
+
 **Already partly covering later phases:** auth rate limiting (in-memory, per process;
 Redis comes in phase 9), audit logging, request IDs, CI (`.github/workflows/platform-ci.yml`:
 lint, type check, tests on SQLite *and* PostgreSQL+pgvector, production build, Docker builds).
@@ -189,6 +212,7 @@ Backend tests use a temporary SQLite database built by the real migrations. Set
 | GET | `/api/documents/{id}/file` | user | The original file |
 | DELETE | `/api/documents/{id}` | user | Delete file, record and all extracted data |
 | POST | `/api/documents/{id}/reprocess` | user | Retry a failed document |
+| POST | `/api/search` | user | Hybrid search over your documents and/or the knowledge base |
 | GET | `/ready` | – | Readiness (database, pgvector, storage, OCR, scanner, LLM, worker mode) |
 
 ## Known limitations
@@ -203,5 +227,9 @@ Backend tests use a temporary SQLite database built by the real migrations. Set
   Gemini OCR + extraction were tested live.
 - Rule-based extraction (no Gemini key) is deliberately conservative: it reads labelled
   fields and passport MRZs, and leaves anything else for the AI path.
-- Documents are not yet searchable by the assistant; chunking, embeddings and retrieval
-  arrive in phase 3.
+- No reranker yet: results come from hybrid search alone. Ambiguous questions (e.g. "how
+  late can I check in?") may surface hotel and flight sections alike; the assistant
+  (phase 4) resolves that from context.
+- Keyword search runs in Python over the relevant chunk set (the user's chunks, or the
+  knowledge base). Fine at this scale; move it to PostgreSQL full-text search if the
+  knowledge base grows to many thousands of chunks.
