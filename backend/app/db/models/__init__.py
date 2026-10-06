@@ -1,6 +1,7 @@
 """All ORM models, imported here so Alembic and `Base.metadata` see every table."""
 
 from app.db.models.audit import AuditLog
+from app.db.models.chat import Conversation, Message, ToolExecution
 from app.db.models.document import (
     Document,
     DocumentPage,
@@ -16,6 +17,7 @@ from app.db.models.user import CabinClass, Role, TravelPreference, User, UserPro
 __all__ = [
     "AuditLog",
     "CabinClass",
+    "Conversation",
     "Document",
     "DocumentChunk",
     "DocumentPage",
@@ -25,8 +27,10 @@ __all__ = [
     "JobStatus",
     "KnowledgeChunk",
     "KnowledgeDocument",
+    "Message",
     "ProcessingJob",
     "Role",
+    "ToolExecution",
     "TravelPreference",
     "User",
     "UserProfile",

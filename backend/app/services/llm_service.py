@@ -8,7 +8,7 @@ prompts and responses are never logged, only metadata (model, latency, sizes).
 import asyncio
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Any, TypeVar
 
@@ -43,6 +43,49 @@ class Blob:
 Content = str | Blob
 
 
+@dataclass(frozen=True)
+class ChatTurn:
+    """A plain text message in a conversation history."""
+
+    role: str  # "user" | "model"
+    text: str
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    args: dict[str, Any]
+
+
+@dataclass
+class ModelTurn:
+    """What the model returned: final text, or tool calls the backend must execute.
+
+    `raw` is the SDK content, sent back unchanged so Gemini sees its own thought
+    signatures on the next step.
+    """
+
+    text: str = ""
+    calls: list[ToolCall] = field(default_factory=list)
+    raw: Any = None
+
+
+@dataclass(frozen=True)
+class ToolResult:
+    name: str
+    response: dict[str, Any]
+
+
+HistoryItem = ChatTurn | ModelTurn | ToolResult
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    name: str
+    description: str
+    parameters: dict[str, Any]  # JSON schema
+
+
 class LLMService:
     def __init__(self, api_key: str, model: str, timeout: float):
         self.model = model
@@ -73,13 +116,37 @@ class LLMService:
             for c in contents
         ]
 
-    async def _call(self, purpose: str, contents: list[Content], config):
+    @staticmethod
+    def _history(history: list[HistoryItem]):
+        from google.genai import types
+
+        contents: list[types.Content] = []
+        for item in history:
+            if isinstance(item, ChatTurn):
+                contents.append(types.Content(role=item.role,
+                                              parts=[types.Part.from_text(text=item.text)]))
+            elif isinstance(item, ModelTurn):
+                contents.append(item.raw or types.Content(role="model", parts=[
+                    types.Part.from_function_call(name=c.name, args=c.args) for c in item.calls
+                ] or [types.Part.from_text(text=item.text)]))
+            else:
+                part = types.Part.from_function_response(name=item.name, response=item.response)
+                last = contents[-1] if contents else None
+                # Results of parallel calls go back together in one turn.
+                if last is not None and last.role == "user" and last.parts and all(
+                        p.function_response for p in last.parts):
+                    last.parts.append(part)
+                else:
+                    contents.append(types.Content(role="user", parts=[part]))
+        return contents
+
+    async def _call(self, purpose: str, contents, config):
         client = self._get_client()
         start = time.perf_counter()
         try:
             response = await asyncio.wait_for(
                 client.aio.models.generate_content(
-                    model=self.model, contents=self._parts(contents), config=config
+                    model=self.model, contents=contents, config=config
                 ),
                 self.timeout,
             )
@@ -105,7 +172,7 @@ class LLMService:
             system_instruction=system, temperature=temperature,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        response = await self._call(purpose, contents, config)
+        response = await self._call(purpose, self._parts(contents), config)
         return (response.text or "").strip()
 
     async def generate_structured(self, *, purpose: str, system: str,
@@ -121,7 +188,7 @@ class LLMService:
             response_schema=schema,
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        response = await self._call(purpose, contents, config)
+        response = await self._call(purpose, self._parts(contents), config)
         parsed = response.parsed
         if isinstance(parsed, schema):
             return parsed
@@ -130,6 +197,29 @@ class LLMService:
         except ValidationError as exc:
             raise LLMError("response did not match the schema") from exc
 
+    async def generate_with_tools(self, *, purpose: str, system: str,
+                                  history: list[HistoryItem], tools: list[ToolSpec],
+                                  temperature: float = 0.2) -> ModelTurn:
+        """One model step. The backend executes any returned tool calls itself."""
+        from google.genai import types
+
+        config = types.GenerateContentConfig(
+            system_instruction=system,
+            temperature=temperature,
+            tools=[types.Tool(function_declarations=[
+                types.FunctionDeclaration(name=t.name, description=t.description,
+                                          parameters_json_schema=t.parameters)
+                for t in tools
+            ])] if tools else None,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        )
+        response = await self._call(purpose, self._history(history), config)
+        calls = [ToolCall(name=c.name or "", args=dict(c.args or {}))
+                 for c in response.function_calls or []]
+        raw = response.candidates[0].content if response.candidates else None
+        if calls:
+            return ModelTurn(calls=calls, raw=raw)
+        return ModelTurn(text=(response.text or "").strip(), raw=raw)
 
     async def embed(self, texts: list[str], *, query: bool = False) -> list[list[float]]:
         """Unit-length embeddings (768-d). `query=True` for search queries."""
