@@ -1,41 +1,52 @@
-from vectorizer.app.vectordb.vectordb import VectorDB
-from customer_support_chat.app.core.settings import get_settings
+from typing import List, Dict, Tuple
+
 from langchain_core.tools import tool
-import logging
-from typing import List, Dict
 
-logger = logging.getLogger(__name__)
+from customer_support_chat.app.core.logger import logger
+from customer_support_chat.app.services.rag import KnowledgeBaseUnavailable, get_retriever
 
-settings = get_settings()
-faq_vectordb = VectorDB(table_name="faq", collection_name="faq_collection")
+NO_ANSWER = (
+    "NO_RELEVANT_POLICY_FOUND: The knowledge base contains no information that answers this "
+    "question. Tell the customer you could not verify this in the official policies; do not "
+    "guess or invent a policy."
+)
+UNAVAILABLE = (
+    "KNOWLEDGE_BASE_UNAVAILABLE: Policy documents cannot be searched right now. Tell the customer "
+    "you cannot verify policy details at the moment; do not guess or invent a policy."
+)
 
-@tool
-def search_faq(
-    query: str,
-    limit: int = 2,
-) -> List[Dict]:
-    """Search for FAQ entries based on a natural language query."""
-    search_results = faq_vectordb.search(query, limit=limit)
 
-    faq_entries = []
-    for result in search_results:
-        payload = result.payload
-        faq_entries.append({
-            "question": payload["question"],
-            "answer": payload["answer"],
-            "category": payload["category"],
-            "chunk": payload["content"],
-            "similarity": result.score,
-        })
-    return faq_entries
+def search_knowledge_base(query: str, limit: int | None = None) -> List[Dict]:
+    """Return relevant knowledge-base chunks with their source metadata."""
+    return [
+        {**chunk.citation(), "text": chunk.text}
+        for chunk in get_retriever().retrieve(query, top_k=limit)
+    ]
 
-@tool
-def lookup_policy(query: str) -> str:
-    """Consult the company policies to check whether certain options are permitted.
-    Use this before making any flight changes or performing other 'write' events."""
-    faq_results = search_faq(query, limit=2)
-    if not faq_results:
-        return "Sorry, I couldn't find any relevant policy information. Please contact support for assistance."
-    
-    policy_info = "\n\n".join([f"Q: {entry['question']}\nA: {entry['answer']}" for entry in faq_results])
-    return f"Here's the relevant policy information:\n\n{policy_info}"
+
+@tool(response_format="content_and_artifact")
+def lookup_policy(query: str) -> Tuple[str, List[Dict]]:
+    """Search the official company policies and FAQs (baggage, check-in, cancellation, refunds,
+    flight changes, fares, payment, travel documents, car rental, hotel and excursion policies).
+    Use this for ANY policy or general-knowledge question, and before making flight changes or
+    other 'write' operations. Do not use it for customer-specific booking data."""
+    try:
+        results = search_knowledge_base(query)
+    except KnowledgeBaseUnavailable as exc:
+        logger.error(f"Policy lookup unavailable: {exc}")
+        return UNAVAILABLE, []
+
+    if not results:
+        return NO_ANSWER, []
+
+    excerpts = "\n\n".join(
+        f"[{i}] {r['document_name']} - {r['section']}\n{r['text']}"
+        for i, r in enumerate(results, start=1)
+    )
+    content = (
+        "Relevant policy excerpts. Answer ONLY from these excerpts and mention the document "
+        "names you used. If they do not fully answer the question, say which part you could "
+        f"not verify.\n\n{excerpts}"
+    )
+    sources = [{k: v for k, v in r.items() if k != "text"} for r in results]
+    return content, sources

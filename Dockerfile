@@ -4,33 +4,31 @@ FROM python:3.12-slim
 # Set the working directory
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    PIP_NO_CACHE_DIR=1
 
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 -
+# CPU-only PyTorch keeps the image small (embeddings + reranker run on CPU).
+RUN pip install --index-url https://download.pytorch.org/whl/cpu torch
 
-# Add Poetry to PATH
-ENV PATH="/root/.local/bin:$PATH"
+COPY requirements.txt /app/
+RUN grep -v "^torch==" requirements.txt > /tmp/requirements.txt \
+    && pip install -r /tmp/requirements.txt
 
-# Copy Poetry files
-COPY pyproject.toml poetry.lock* /app/
-
-# Configure Poetry
-RUN poetry config virtualenvs.create false \
-    && poetry install --no-interaction --no-ansi --no-root
-
-# Copy application code
+# Application code and knowledge base
 COPY customer_support_chat /app/customer_support_chat
 COPY vectorizer /app/vectorizer
+COPY knowledge_base /app/knowledge_base
+COPY scripts /app/scripts
+COPY streamlit_app.py /app/
+COPY .streamlit /app/.streamlit
 
-# Set environment variables
-ENV PYTHONPATH="/app"
+# Run as an unprivileged user
+RUN useradd --create-home appuser && chown -R appuser /app
+USER appuser
 
-# Expose port if running a server (adjust as needed)
-EXPOSE 8501
+EXPOSE 8000 8501
 
-# Default command
-CMD ["python", "-m", "customer_support_chat.app.main"]
+# Default: the API. docker-compose overrides this for the UI and ingestion.
+CMD ["uvicorn", "customer_support_chat.app.api:app", "--host", "0.0.0.0", "--port", "8000"]

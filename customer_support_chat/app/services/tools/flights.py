@@ -4,21 +4,34 @@ from langchain_core.tools import tool
 from langchain_core.runnables import RunnableConfig
 import sqlite3
 from typing import Optional, Union, List, Dict
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import pytz
+
+from customer_support_chat.app.core.errors import CustomerNotIdentifiedError
 
 settings = get_settings()
 db = settings.SQLITE_DB_PATH
 flights_vectordb = VectorDB(table_name="flights", collection_name="flights_collection")
 
+# Flight changes are only allowed up to this long before departure (see flight_change_policy.md).
+MIN_HOURS_BEFORE_DEPARTURE = 3
+
+
+def get_passenger_id(config: RunnableConfig) -> str:
+    """The authenticated customer's passenger id, injected by the API per request."""
+    passenger_id = (config or {}).get("configurable", {}).get("passenger_id")
+    if not passenger_id:
+        raise CustomerNotIdentifiedError(
+            "The customer is not signed in, so no booking data is available. "
+            "Ask the customer to sign in with their passenger ID and booking reference."
+        )
+    return passenger_id
+
 
 @tool
 def fetch_user_flight_information(*, config: RunnableConfig) -> List[Dict]:
     """Fetch all tickets for the user along with corresponding flight information and seat assignments."""
-    configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id", None)
-    if not passenger_id:
-        raise ValueError("No passenger ID configured.")
+    passenger_id = get_passenger_id(config)
 
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
@@ -48,11 +61,49 @@ def fetch_user_flight_information(*, config: RunnableConfig) -> List[Dict]:
 
 @tool
 def search_flights(
-    query: str,
-    limit: int = 2,
+    departure_airport: Optional[str] = None,
+    arrival_airport: Optional[str] = None,
+    start_time: Optional[date] = None,
+    end_time: Optional[date] = None,
+    query: Optional[str] = None,
+    limit: int = 10,
 ) -> List[Dict]:
-    """Search for flights based on a natural language query."""
-    search_results = flights_vectordb.search(query, limit=limit)
+    """Search the flight schedule. Prefer the structured filters: departure_airport and
+    arrival_airport are 3-letter IATA codes (e.g. "BSL", "CDG"); start_time/end_time are
+    YYYY-MM-DD dates bounding the scheduled departure. Use `query` only for free-text
+    searches when no filters apply. Returns flight_id values usable for rebooking."""
+    if departure_airport or arrival_airport or start_time or end_time:
+        conn = sqlite3.connect(db)
+        conn.row_factory = sqlite3.Row
+        sql = (
+            "SELECT flight_id, flight_no, departure_airport, arrival_airport, "
+            "scheduled_departure, scheduled_arrival, status, aircraft_code "
+            "FROM flights WHERE 1 = 1"
+        )
+        params: list = []
+        if departure_airport:
+            sql += " AND departure_airport = ?"
+            params.append(departure_airport.strip().upper())
+        if arrival_airport:
+            sql += " AND arrival_airport = ?"
+            params.append(arrival_airport.strip().upper())
+        if start_time:
+            sql += " AND scheduled_departure >= ?"
+            params.append(start_time.isoformat())
+        if end_time:
+            # Include the whole end day.
+            sql += " AND scheduled_departure < ?"
+            params.append((end_time + timedelta(days=1)).isoformat())
+        sql += " ORDER BY scheduled_departure LIMIT ?"
+        params.append(max(1, min(limit, 20)))
+        rows = [dict(row) for row in conn.execute(sql, params).fetchall()]
+        conn.close()
+        return rows
+
+    if not query:
+        return []
+
+    search_results = flights_vectordb.search(query, limit=min(limit, 5))
 
     flights = []
     for result in search_results:
@@ -77,14 +128,30 @@ def search_flights(
 def update_ticket_to_new_flight(
     ticket_no: str, new_flight_id: int, *, config: RunnableConfig
 ) -> str:
-    """Update the user's ticket to a new valid flight."""
-    configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id", None)
-    if not passenger_id:
-        raise ValueError("No passenger ID configured.")
+    """Update the user's ticket to a new valid flight (use the flight_id returned by search_flights)."""
+    passenger_id = get_passenger_id(config)
 
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
+
+    cursor.execute(
+        "SELECT departure_airport, arrival_airport, scheduled_departure FROM flights WHERE flight_id = ?",
+        (new_flight_id,),
+    )
+    new_flight = cursor.fetchone()
+    if not new_flight:
+        conn.close()
+        return f"Invalid new flight ID {new_flight_id} provided."
+
+    departure = datetime.fromisoformat(str(new_flight[2]))
+    if departure.tzinfo is None:
+        departure = departure.replace(tzinfo=pytz.UTC)
+    if departure - datetime.now(pytz.UTC) < timedelta(hours=MIN_HOURS_BEFORE_DEPARTURE):
+        conn.close()
+        return (
+            f"Not permitted to reschedule to flight {new_flight_id}: it departs in less than "
+            f"{MIN_HOURS_BEFORE_DEPARTURE} hours (scheduled {new_flight[2]})."
+        )
 
     # Check if the ticket exists and belongs to the passenger
     cursor.execute(
@@ -94,7 +161,7 @@ def update_ticket_to_new_flight(
     ticket = cursor.fetchone()
     if not ticket:
         conn.close()
-        return f"Ticket {ticket_no} not found for passenger {passenger_id}."
+        return f"Ticket {ticket_no} was not found in the signed-in customer's bookings."
 
     # Update the flight in ticket_flights
     cursor.execute(
@@ -113,10 +180,7 @@ def update_ticket_to_new_flight(
 @tool
 def cancel_ticket(ticket_no: str, *, config: RunnableConfig) -> str:
     """Cancel the user's ticket and remove it from the database."""
-    configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id", None)
-    if not passenger_id:
-        raise ValueError("No passenger ID configured.")
+    passenger_id = get_passenger_id(config)
 
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
@@ -129,7 +193,7 @@ def cancel_ticket(ticket_no: str, *, config: RunnableConfig) -> str:
     ticket = cursor.fetchone()
     if not ticket:
         conn.close()
-        return f"Ticket {ticket_no} not found for passenger {passenger_id}."
+        return f"Ticket {ticket_no} was not found in the signed-in customer's bookings."
 
     # Delete from ticket_flights
     cursor.execute(
@@ -154,11 +218,7 @@ def book_flight(
 ) -> str:
     """Book a selected flight for the configured passenger."""
 
-    configuration = config.get("configurable", {})
-    passenger_id = configuration.get("passenger_id")
-
-    if not passenger_id:
-        raise ValueError("No passenger ID configured.")
+    passenger_id = get_passenger_id(config)
 
     conn = sqlite3.connect(db)
     cursor = conn.cursor()

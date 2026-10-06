@@ -28,7 +28,7 @@ vectorizer
 
 ### 1. `embedding_generator.py`
 
-This file generates embeddings for the input content using the OpenAI API. It handles both single strings and lists of strings as inputs.
+This file generates embeddings locally with sentence-transformers (all-MiniLM-L6-v2, 384 dimensions). The model is loaded on first use. It handles both single strings and lists of strings as inputs.
 
 - **Function: `generate_embedding`**
   - **Input:** `Union[str, List[str]]` - Accepts either a single string or a list of strings.
@@ -52,7 +52,7 @@ This is the core component of the vectorizer module that handles interactions wi
     - `connect_to_qdrant`: Connects to the Qdrant client using the provided settings.
     - `create_or_clear_collection`: Creates a new collection or clears the existing one.
     - `format_content`: Formats content for different collection types (car rentals, flights, hotels, etc.).
-    - `generate_embedding_async`: Generates embeddings asynchronously using the OpenAI API.
+    - `generate_embedding_async`: Generates embeddings for a chunk with the local model.
     - `create_embeddings_async`: Main function for handling embedding creation for various content types.
     - `index_regular_docs`: Indexes regular documents from SQLite into Qdrant.
     - `index_faq_docs`: Handles the FAQ documents and indexes them into Qdrant.
@@ -60,7 +60,7 @@ This is the core component of the vectorizer module that handles interactions wi
     - `search`: Performs a vector search on the Qdrant collection.
 
 - **Asynchronous Processing:**
-  - Uses `asyncio` and `aiohttp` to handle batch processing of documents and interact with the OpenAI API efficiently.
+  - Chunks are embedded in batches of 256 with the local model.
   - **Batching:** Chunks are processed in batches to avoid exceeding rate limits.
 
 ### 4. `main.py`
@@ -78,12 +78,12 @@ Contains utility functions that support various operations in the module.
 
 1. **Creating Embeddings**:
    - Run `main.py` to initialize vector databases for the various collections and generate embeddings for them.
-   - Example command: `python main.py`
+   - Example command: `python scripts/ingest.py` (or `python -m vectorizer.app.main --only knowledge_base`)
 
 2. **Searching**:
    - Use the `search` function from `vectordb.py` to perform searches against the indexed embeddings in Qdrant.
 
 ## Notes
 
-- Ensure the OpenAI API key is set in the environment variables or through the settings file before running the embedding generation.
+- No API key is needed: embeddings are generated locally. Qdrant runs embedded (`QDRANT_PATH`) unless `QDRANT_URL` is set. The knowledge base (`knowledge_base/*.md`) is indexed by `app/knowledge/loader.py`.
 - The `RecursiveCharacterTextSplitter` is used for splitting large pieces of text into manageable chunks to ensure effective embedding generation.

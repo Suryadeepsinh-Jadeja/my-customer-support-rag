@@ -6,8 +6,6 @@ import pandas as pd
 import requests
 from customer_support_chat.app.core.settings import get_settings
 from customer_support_chat.app.core.logger import logger
-from qdrant_client import QdrantClient
-from customer_support_chat.app.core.settings import get_settings
 from typing import List, Dict, Callable
 
 from langchain_core.messages import ToolMessage
@@ -45,7 +43,8 @@ def download_and_prepare_db():
         os.makedirs(db_dir)
     db_url = "https://storage.googleapis.com/benchmarks-artifacts/travel-db/travel2.sqlite"
     if not os.path.exists(db_file):
-        response = requests.get(db_url)
+        logger.info(f"Downloading travel database to {db_file}")
+        response = requests.get(db_url, timeout=300)
         response.raise_for_status()
         with open(db_file, "wb") as f:
             f.write(response.content)
@@ -96,6 +95,9 @@ def update_dates(db_file):
 def handle_tool_error(state) -> dict:
     error = state.get("error")
     tool_calls = state["messages"][-1].tool_calls
+    logger.warning(
+        f"Tool call failed: {[tc['name'] for tc in tool_calls]}: {type(error).__name__}: {error}"
+    )
     return {
         "messages": [
             {
@@ -116,17 +118,6 @@ def create_tool_node_with_fallback(tools: list):
         [RunnableLambda(handle_tool_error)], exception_key="error"
     )
 
-def get_qdrant_client():
-    settings = get_settings()
-    try:
-        client = QdrantClient(url=settings.QDRANT_URL)
-        # Test the connection
-        client.get_collections()
-        return client
-    except Exception as e:
-        logger.error(f"Failed to connect to Qdrant server at {settings.QDRANT_URL}. Error: {str(e)}")
-        raise
-
 def flight_info_to_string(flight_info: List[Dict]) -> str:
     info_lines = [] 
     i = 0
@@ -146,6 +137,4 @@ def flight_info_to_string(flight_info: List[Dict]) -> str:
         )
         info_lines.append(line)
 
-    info_lines = f"User current booked flight(s) details:\n" + "\n".join(info_lines)
-
-    return "\n".join(info_lines)
+    return "User current booked flight(s) details:\n" + "\n".join(info_lines)

@@ -1,305 +1,199 @@
-
 """
-Streamlit UI for the Multi-Agent RAG Customer Support System.
+Streamlit chat UI for the customer support assistant.
 
-Flow:
-User
-  ↓
-Primary Assistant
-  ↓
-Specialized Assistant
-  ↓
-Tools / Qdrant / Travel Database
-  ↓
-Final Response
+The UI is a thin client of the backend API (customer_support_chat/app/api.py):
+
+User -> Streamlit -> POST /chat -> LangGraph (primary + specialist assistants,
+RAG, tools) -> response with sources / pending confirmation -> Streamlit
+
+Run the API first:   python -m customer_support_chat.app.api
+Then:                streamlit run streamlit_app.py
 """
 
 from __future__ import annotations
 
 import os
-import sys
-import uuid
 from pathlib import Path
 
+import requests
 import streamlit as st
 from dotenv import load_dotenv
-from langchain_core.messages import AIMessage, ToolMessage
 
 # ============================================================
 # PATH / ENVIRONMENT
 # ============================================================
 
 REPO_ROOT = Path(__file__).resolve().parent
-
-os.chdir(REPO_ROOT)
-
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
 load_dotenv(REPO_ROOT / ".env")
+
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
+DEMO_PASSENGER_ID = os.getenv("DEMO_PASSENGER_ID", "")
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "120")) + 10
+GRAPH_IMAGE = REPO_ROOT / "graphs" / "multi-agent-rag-system-graph.png"
 
 # ============================================================
 # PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
-    page_title="Multi-Agent RAG Customer Support",
+    page_title="Swiss Airlines Customer Support",
     page_icon="✈️",
     layout="wide",
 )
 
 # ============================================================
-# CONSTANTS
-# ============================================================
-
-QDRANT_URL = os.getenv(
-    "QDRANT_URL",
-    "http://localhost:6333",
-)
-
-PASSENGER_ID = os.getenv(
-    "PASSENGER_ID",
-    "5102 899977",
-)
-
-GRAPH_IMAGE = REPO_ROOT / "graphs" / "multi-agent-rag-system-graph.png"
-
-# ============================================================
 # SESSION STATE
 # ============================================================
 
-if "thread_id" not in st.session_state:
-    st.session_state.thread_id = str(uuid.uuid4())
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-if "graph" not in st.session_state:
-    st.session_state.graph = None
-
-# ============================================================
-# LOAD BACKEND
-# ============================================================
-
-@st.cache_resource
-def load_graph():
-
-    # Import only after environment variables are loaded.
-    from customer_support_chat.app.graph import multi_agentic_graph
-
-    return multi_agentic_graph
+DEFAULTS = {
+    "messages": [],          # chat history: {role, content, agent?, sources?, actions?}
+    "conversation_id": None,
+    "token": None,
+    "customer": None,
+    "pending": None,         # last response awaiting confirmation
+    "queued": None,          # demo question waiting to be sent
+}
+for key, value in DEFAULTS.items():
+    st.session_state.setdefault(key, value)
 
 
 # ============================================================
-# QDRANT CHECK
+# API CLIENT
 # ============================================================
 
-def check_qdrant():
+
+class ApiError(Exception):
+    pass
+
+
+def api_post(path: str, payload: dict) -> dict:
+    headers = {}
+    if st.session_state.token:
+        headers["Authorization"] = f"Bearer {st.session_state.token}"
+    try:
+        response = requests.post(f"{API_URL}{path}", json=payload, headers=headers, timeout=REQUEST_TIMEOUT)
+    except requests.Timeout:
+        raise ApiError("The assistant is taking too long to respond. Please try again.")
+    except requests.ConnectionError:
+        raise ApiError("We can't reach the support service right now. Please try again in a moment.")
 
     try:
+        body = response.json()
+    except ValueError:
+        raise ApiError("Unexpected response from the support service. Please try again.")
 
-        from qdrant_client import QdrantClient
-
-        client = QdrantClient(
-            url=QDRANT_URL,
-            timeout=3,
-        )
-
-        collections = client.get_collections().collections
-
-        names = [c.name for c in collections]
-
-        return True, names
-
-    except Exception as e:
-
-        return False, str(e)
+    if response.status_code >= 400:
+        error = body.get("error", {}) if isinstance(body, dict) else {}
+        if error.get("code") in {"not_authenticated", "conversation_not_found"} and st.session_state.token:
+            sign_out(local_only=True)
+        raise ApiError(error.get("message", "Something went wrong. Please try again."))
+    return body
 
 
-# ============================================================
-# MESSAGE HELPERS
-# ============================================================
-
-def get_message_text(content):
-
-    if isinstance(content, str):
-        return content
-
-    if isinstance(content, list):
-
-        result = []
-
-        for item in content:
-
-            if isinstance(item, dict):
-
-                if "text" in item:
-                    result.append(item["text"])
-
-            else:
-                result.append(str(item))
-
-        return "\n".join(result)
-
-    return str(content)
+@st.cache_data(ttl=15, show_spinner=False)
+def service_health() -> dict | None:
+    try:
+        return requests.get(f"{API_URL}/health", timeout=5).json()
+    except Exception:
+        return None
 
 
-def show_agent_step(node, update):
-
-    st.write(f"### 🔹 {node}")
-
-    if not isinstance(update, dict):
-        return
-
-    messages = update.get("messages", [])
-
-    if not isinstance(messages, list):
-        messages = [messages]
-
-    for message in messages:
-
-        # ----------------------------------------------------
-        # AI MESSAGE
-        # ----------------------------------------------------
-
-        if isinstance(message, AIMessage):
-
-            text = get_message_text(message.content)
-
-            if text:
-                st.info(text)
-
-            # Tool calls
-            for tool in message.tool_calls or []:
-
-                tool_name = tool.get("name", "unknown")
-
-                arguments = tool.get("args", {})
-
-                st.markdown(
-                    f"🔧 **Tool called:** `{tool_name}`"
-                )
-
-                if arguments:
-                    st.json(arguments)
-
-        # ----------------------------------------------------
-        # TOOL MESSAGE
-        # ----------------------------------------------------
-
-        elif isinstance(message, ToolMessage):
-
-            st.success(
-                f"📥 Tool result: `{message.name}`"
-            )
-
-            content = get_message_text(message.content)
-
-            if len(content) > 1500:
-                content = content[:1500] + "\n..."
-
-            st.code(content)
-
-
-# ============================================================
-# RUN GRAPH
-# ============================================================
-
-def run_query(query):
-
-    graph = load_graph()
-
-    config = {
-        "configurable": {
-            "passenger_id": PASSENGER_ID,
-            "thread_id": st.session_state.thread_id,
-        },
-        "recursion_limit": 50,
-    }
-
-    final_answer = None
-
-    trace = []
-
-    with st.status(
-        "🧭 Running Multi-Agent RAG workflow...",
-        expanded=True,
-    ) as status:
-
+def sign_out(local_only: bool = False):
+    if not local_only and st.session_state.token:
         try:
+            api_post("/auth/logout", {})
+        except ApiError:
+            pass
+    for key in ("token", "customer", "conversation_id", "pending"):
+        st.session_state[key] = None
+    st.session_state.messages = []
 
-            for event in graph.stream(
-                {
-                    "messages": [
-                        ("user", query)
-                    ]
-                },
-                config,
-                stream_mode="updates",
-            ):
 
-                for node, update in event.items():
+def new_conversation():
+    st.session_state.messages = []
+    st.session_state.conversation_id = None
+    st.session_state.pending = None
 
-                    if node.startswith("__"):
-                        continue
 
-                    trace.append(node)
+def record_response(body: dict):
+    st.session_state.conversation_id = body["conversation_id"]
+    st.session_state.messages.append(
+        {
+            "role": "assistant",
+            "content": body["response"],
+            "agent": body.get("agent"),
+            "sources": body.get("sources", []),
+            "actions": body.get("pending_actions", []),
+        }
+    )
+    st.session_state.pending = body if body.get("status") == "confirmation_required" else None
 
-                    show_agent_step(
-                        node,
-                        update,
-                    )
 
-                    # Look for final AI response
-                    if isinstance(update, dict):
+def send_message(text: str):
+    st.session_state.messages.append({"role": "user", "content": text})
+    with st.chat_message("user"):
+        st.markdown(text)
+    with st.chat_message("assistant"):
+        with st.spinner("Thinking..."):
+            try:
+                body = api_post("/chat", {"conversation_id": st.session_state.conversation_id, "message": text})
+            except ApiError as e:
+                st.session_state.messages.append({"role": "error", "content": str(e)})
+                return
+    record_response(body)
 
-                        messages = update.get(
-                            "messages",
-                            [],
-                        )
 
-                        if not isinstance(
-                            messages,
-                            list,
-                        ):
-                            messages = [messages]
-
-                        for message in messages:
-
-                            if isinstance(
-                                message,
-                                AIMessage,
-                            ):
-
-                                text = get_message_text(
-                                    message.content
-                                )
-
-                                if (
-                                    text
-                                    and not message.tool_calls
-                                ):
-                                    final_answer = text
-
-            status.update(
-                label="✅ Multi-Agent workflow completed",
-                state="complete",
+def send_confirmation(approved: bool, reason: str | None = None):
+    pending = st.session_state.pending
+    st.session_state.pending = None
+    st.session_state.messages.append(
+        {"role": "user", "content": "✅ Confirmed" if approved else f"❌ Declined{f': {reason}' if reason else ''}"}
+    )
+    try:
+        with st.spinner("Processing your request..."):
+            body = api_post(
+                "/chat/confirm",
+                {"conversation_id": pending["conversation_id"], "approved": approved, "reason": reason or None},
             )
+    except ApiError as e:
+        st.session_state.messages.append({"role": "error", "content": str(e)})
+        return
+    record_response(body)
 
-        except Exception as e:
 
-            status.update(
-                label="❌ Workflow failed",
-                state="error",
-            )
+# ============================================================
+# RENDERING
+# ============================================================
 
-            st.error(
-                f"{type(e).__name__}: {e}"
-            )
 
-            return None
+def render_sources(sources: list[dict]):
+    if not sources:
+        return
+    with st.expander(f"📚 Sources ({len(sources)})"):
+        for src in sources:
+            st.markdown(f"- **{src['document_name']}** — {src['section']}  \n  `{src['source']}`")
 
-    return final_answer
+
+def render_actions(actions: list[dict]):
+    for action in actions:
+        with st.container(border=True):
+            st.markdown(f"**🔒 {action['title']}**")
+            for detail in action["details"]:
+                st.markdown(f"- {detail['label']}: **{detail['value']}**")
+
+
+def render_message(message: dict):
+    role = message["role"]
+    if role == "error":
+        st.error(message["content"], icon="⚠️")
+        return
+    with st.chat_message(role):
+        if role == "assistant" and message.get("agent"):
+            st.caption(message["agent"])
+        st.markdown(message["content"])
+        if role == "assistant":
+            render_actions(message.get("actions", []))
+            render_sources(message.get("sources", []))
 
 
 # ============================================================
@@ -308,301 +202,134 @@ def run_query(query):
 
 with st.sidebar:
 
-    st.title("⚙️ System Status")
+    st.title("✈️ My Account")
 
-    # --------------------------------------------------------
-    # Gemini
-    # --------------------------------------------------------
-
-    st.subheader("🤖 LLM")
-
-    gemini_key = (
-        os.getenv("GEMINI_API_KEY")
-        or os.getenv("GOOGLE_API_KEY")
-    )
-
-    if gemini_key:
-
-        st.success(
-            "Gemini API key detected",
-            icon="🟢",
-        )
-
-        st.caption(
-            "The key is loaded from the environment."
-        )
-
+    if st.session_state.token:
+        st.success(f"Signed in as passenger {st.session_state.customer}", icon="👤")
+        if st.button("Sign out", use_container_width=True):
+            sign_out()
+            st.rerun()
     else:
+        st.caption("Sign in to view and manage your bookings. Policy questions work without signing in.")
+        with st.form("sign_in"):
+            passenger_id = st.text_input("Passenger ID", value=DEMO_PASSENGER_ID, placeholder="e.g. 8149 604011")
+            reference = st.text_input("Booking reference or ticket number", placeholder="e.g. 06B046")
+            if st.form_submit_button("Sign in", use_container_width=True):
+                try:
+                    body = api_post("/auth/login", {"passenger_id": passenger_id, "booking_reference": reference})
+                except ApiError as e:
+                    st.error(str(e))
+                else:
+                    new_conversation()
+                    st.session_state.token = body["session_token"]
+                    st.session_state.customer = body["customer"]
+                    st.rerun()
 
-        st.warning(
-            "Gemini API key not detected",
-            icon="🟠",
-        )
+    st.divider()
 
-    # --------------------------------------------------------
-    # QDRANT
-    # --------------------------------------------------------
-
-    st.subheader("🗄️ Vector Database")
-
-    qdrant_ok, qdrant_info = check_qdrant()
-
-    if qdrant_ok:
-
-        st.success(
-            "Qdrant connected",
-            icon="🟢",
-        )
-
-        st.caption(
-            f"URL: {QDRANT_URL}"
-        )
-
-        st.write("Collections:")
-
-        for collection in qdrant_info:
-
-            st.code(collection)
-
-    else:
-
-        st.error(
-            "Qdrant unavailable",
-            icon="🔴",
-        )
-
-        st.caption(
-            str(qdrant_info)
-        )
-
-    # --------------------------------------------------------
-    # PASSENGER
-    # --------------------------------------------------------
-
-    st.subheader("👤 Passenger")
-
-    st.code(PASSENGER_ID)
-
-    # --------------------------------------------------------
-    # SESSION
-    # --------------------------------------------------------
-
-    st.subheader("💬 Session")
-
-    st.caption(
-        f"Thread: {st.session_state.thread_id[:8]}"
-    )
-
-    if st.button(
-        "🧹 New Conversation",
-        use_container_width=True,
-    ):
-
-        st.session_state.messages = []
-
-        st.session_state.thread_id = str(
-            uuid.uuid4()
-        )
-
+    if st.button("🧹 New conversation", use_container_width=True):
+        new_conversation()
         st.rerun()
 
     # --------------------------------------------------------
-    # GRAPH
+    # SERVICE STATUS
     # --------------------------------------------------------
 
-    if GRAPH_IMAGE.exists():
+    st.subheader("Service status")
+    health = service_health()
+    if health is None:
+        st.error("Support service offline", icon="🔴")
+    elif health.get("status") == "ok":
+        st.success("All systems operational", icon="🟢")
+    else:
+        st.warning("Some services are degraded", icon="🟠")
+        labels = {"llm_configured": "Assistant", "database": "Booking system", "knowledge_base": "Policy library"}
+        for check, ok in health.get("checks", {}).items():
+            st.caption(f"{'✅' if ok else '❌'} {labels.get(check, check)}")
 
-        st.subheader("🗺️ Agent Architecture")
+    # --------------------------------------------------------
+    # ABOUT / ARCHITECTURE
+    # --------------------------------------------------------
 
-        with st.expander(
-            "Show Multi-Agent Graph"
-        ):
-
-            st.image(
-                str(GRAPH_IMAGE),
-                use_container_width=True,
-            )
+    with st.expander("ℹ️ How this assistant works"):
+        st.markdown(
+            """
+1. **Primary assistant** understands your request.
+2. Policy questions are answered from the **official policy library** (with sources).
+3. Booking requests are handled by a **specialist** for flights, hotels, car rentals or excursions.
+4. Any booking, change or cancellation is shown to you first and only runs after **you confirm**.
+"""
+        )
+        if GRAPH_IMAGE.exists():
+            st.image(str(GRAPH_IMAGE), use_container_width=True)
 
 
 # ============================================================
 # MAIN PAGE
 # ============================================================
 
-st.title(
-    "✈️ Multi-Agent RAG Customer Support"
-)
-
-st.caption(
-    "Gemini + LangGraph + Qdrant + Travel Database"
-)
+st.title("✈️ Swiss Airlines Customer Support")
+st.caption("Ask about your bookings, our policies, hotels, car rentals and excursions.")
 
 # ============================================================
-# EXPLANATION
+# SUGGESTED QUESTIONS
 # ============================================================
 
-with st.expander(
-    "🔎 What happens when I ask a question?"
-):
-
-    st.markdown(
-        """
-### Multi-Agent Workflow
-
-**1. User Query**
-
-The user asks a travel-support question.
-
-↓
-
-**2. Primary Assistant**
-
-The primary assistant understands the user's intent.
-
-↓
-
-**3. Agent Routing**
-
-The request is delegated to the appropriate specialized assistant.
-
-Examples:
-
-- Flight → Flight Assistant
-- Hotel → Hotel Assistant
-- Car → Car Rental Assistant
-- Excursion → Excursion Assistant
-
-↓
-
-**4. Tools / RAG**
-
-The specialized assistant can use tools and retrieve
-information from Qdrant.
-
-↓
-
-**5. Gemini**
-
-Gemini processes the request and retrieved information.
-
-↓
-
-**6. Final Response**
-
-The result is returned to the user.
-"""
-    )
-
-
-# ============================================================
-# SUGGESTED DEMO
-# ============================================================
-
-st.subheader("🎯 Demo Questions")
-
-demo_questions = [
-    "What is the status of my flight from BSL to ATH?",
-    "What flights do I currently have booked?",
-    "Can I change my flight?",
-    "Find me a hotel in Basel",
-]
-
-cols = st.columns(2)
-
-for i, question in enumerate(demo_questions):
-
-    if cols[i % 2].button(
-        question,
-        use_container_width=True,
-    ):
-
-        st.session_state.messages.append(
-            {
-                "role": "user",
-                "content": question,
-            }
-        )
-
-        st.rerun()
-
+if not st.session_state.messages:
+    st.subheader("How can we help?")
+    demo_questions = [
+        "What is the baggage policy?",
+        "Show me my flight information.",
+        "Can I cancel my flight, and what refund will I get?",
+        "I want to change my flight.",
+        "I want to book a hotel.",
+        "I need a rental car.",
+        "Recommend an excursion for my trip.",
+        "What documents do I need to travel?",
+    ]
+    cols = st.columns(2)
+    for i, question in enumerate(demo_questions):
+        if cols[i % 2].button(question, use_container_width=True, key=f"demo_{i}"):
+            st.session_state.queued = question
+            st.rerun()
 
 # ============================================================
 # CHAT HISTORY
 # ============================================================
 
 for message in st.session_state.messages:
+    render_message(message)
 
-    with st.chat_message(
-        message["role"]
-    ):
+# ============================================================
+# CONFIRMATION
+# ============================================================
 
-        st.markdown(
-            message["content"]
-        )
-
+if st.session_state.pending:
+    with st.container(border=True):
+        st.markdown("**Do you want me to go ahead with this?**")
+        reason = st.text_input("Optional: tell us what you'd like instead", key="decline_reason")
+        confirm_col, decline_col = st.columns(2)
+        if confirm_col.button("✅ Confirm", type="primary", use_container_width=True):
+            send_confirmation(True)
+            st.rerun()
+        if decline_col.button("❌ Decline", use_container_width=True):
+            send_confirmation(False, reason)
+            st.rerun()
 
 # ============================================================
 # CHAT INPUT
 # ============================================================
 
-query = st.chat_input(
-    "Ask about flights, hotels, car rentals or excursions..."
+placeholder = (
+    "Or reply to change the request..."
+    if st.session_state.pending
+    else "Ask about flights, policies, hotels, car rentals or excursions..."
 )
+query = st.chat_input(placeholder)
 
-
-# Handle demo button
-if (
-    st.session_state.messages
-    and st.session_state.messages[-1]["role"] == "user"
-    and st.session_state.messages[-1].get("processed") != True
-):
-
-    last_message = st.session_state.messages[-1]
-
-    if "processed" not in last_message:
-
-        last_message["processed"] = True
-
-        query = last_message["content"]
-
-
-# ============================================================
-# PROCESS QUERY
-# ============================================================
+if st.session_state.queued and not query:
+    query, st.session_state.queued = st.session_state.queued, None
 
 if query:
-
-    # Display user
-    with st.chat_message(
-        "user"
-    ):
-
-        st.markdown(query)
-
-    # Store
-    st.session_state.messages.append(
-        {
-            "role": "user",
-            "content": query,
-            "processed": True,
-        }
-    )
-
-    # Run LangGraph
-    answer = run_query(query)
-
-    if answer:
-
-        with st.chat_message(
-            "assistant"
-        ):
-
-            st.markdown(answer)
-
-        st.session_state.messages.append(
-            {
-                "role": "assistant",
-                "content": answer,
-            }
-        )
-
+    send_message(query)
     st.rerun()

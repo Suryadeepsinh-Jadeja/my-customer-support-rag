@@ -12,9 +12,9 @@ hotels_vectordb = VectorDB(table_name="hotels", collection_name="hotels_collecti
 @tool
 def search_hotels(
     query: str,
-    limit: int = 2,
+    limit: int = 5,
 ) -> List[Dict]:
-    """Search for hotels based on a natural language query."""
+    """Search partner hotels with a natural language query, e.g. "luxury hotel in Zurich"."""
     search_results = hotels_vectordb.search(query, limit=limit)
 
     hotels = []
@@ -52,12 +52,20 @@ def book_hotel(hotel_id: int) -> str:
 @tool
 def update_hotel(
     hotel_id: int,
-    checkin_date: Optional[Union[datetime, date]] = None,
-    checkout_date: Optional[Union[datetime, date]] = None,
+    checkin_date: Optional[date] = None,
+    checkout_date: Optional[date] = None,
 ) -> str:
-    """Update a hotel's check-in and check-out dates by its ID."""
+    """Update a hotel booking's check-in and/or check-out dates (YYYY-MM-DD) by its ID."""
+    if not checkin_date and not checkout_date:
+        return "Nothing to update: provide a new checkin_date and/or checkout_date (YYYY-MM-DD)."
+
     conn = sqlite3.connect(db)
     cursor = conn.cursor()
+
+    cursor.execute("SELECT 1 FROM hotels WHERE id = ?", (hotel_id,))
+    if cursor.fetchone() is None:
+        conn.close()
+        return f"No hotel found with ID {hotel_id}."
 
     if checkin_date:
         cursor.execute(

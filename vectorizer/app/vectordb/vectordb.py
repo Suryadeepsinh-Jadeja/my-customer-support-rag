@@ -1,24 +1,27 @@
-import asyncio
-import re
 import sqlite3
 import uuid
 
-import aiohttp
-from more_itertools import chunked
-from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, VectorParams, PointStruct
-from tqdm.asyncio import tqdm_asyncio
+from tqdm import tqdm
 
 from vectorizer.app.core.settings import get_settings
 from vectorizer.app.core.logger import logger
 from vectorizer.app.embeddings.embedding_generator import generate_embedding
+from vectorizer.app.knowledge.loader import load_knowledge_chunks
 from .chunkenizer import recursive_character_splitting
+from .client import get_qdrant_client
 
 
 settings = get_settings()
 
 # Sentence Transformer produces 384-dimensional embeddings
 EMBEDDING_DIMENSION = 384
+
+# Number of chunks embedded and upserted per batch.
+BATCH_SIZE = 256
+
+# Deterministic point ids, so re-ingesting the same chunk overwrites it.
+_POINT_NAMESPACE = uuid.UUID("6f1c1f9e-6c55-4a43-9a0e-4b7b0f2a9c11")
 
 
 class VectorDB:
@@ -32,16 +35,17 @@ class VectorDB:
         self.table_name = table_name
         self.collection_name = collection_name
 
-        self.client = QdrantClient(
-            url=settings.QDRANT_URL
-        )
-
-        logger.info(
-            f"Connected to Qdrant: {self.collection_name}"
-        )
+        # Shared, lazily-created client (see client.py).
+        self._client = None
 
         if create_collection:
             self.create_or_clear_collection()
+
+    @property
+    def client(self):
+        if self._client is None:
+            self._client = get_qdrant_client()
+        return self._client
 
     # ---------------------------------------------------------
     # QDRANT COLLECTION
@@ -49,17 +53,11 @@ class VectorDB:
 
     def create_or_clear_collection(self):
 
-        if self.client.collection_exists(
-            self.collection_name
-        ):
+        if self.client.collection_exists(self.collection_name):
             logger.info(
-                f"Collection {self.collection_name} already exists. "
-                f"Recreating it."
+                f"Collection {self.collection_name} already exists. Recreating it."
             )
-
-            self.client.delete_collection(
-                collection_name=self.collection_name
-            )
+            self.client.delete_collection(collection_name=self.collection_name)
 
         self.client.create_collection(
             collection_name=self.collection_name,
@@ -74,6 +72,15 @@ class VectorDB:
             f"with dimension {EMBEDDING_DIMENSION}"
         )
 
+    def collection_ready(self) -> bool:
+        try:
+            return self.client.collection_exists(self.collection_name) and (
+                self.client.count(self.collection_name, exact=False).count > 0
+            )
+        except Exception as e:
+            logger.error(f"Could not inspect collection {self.collection_name}: {e}")
+            return False
+
     # ---------------------------------------------------------
     # FORMAT DATABASE CONTENT
     # ---------------------------------------------------------
@@ -82,11 +89,7 @@ class VectorDB:
 
         if collection_name == "car_rentals_collection":
 
-            booking_status = (
-                "booked"
-                if data["booked"]
-                else "not booked"
-            )
+            booking_status = "booked" if data["booked"] else "not booked"
 
             return (
                 f"Car rental: {data['name']}, "
@@ -101,11 +104,7 @@ class VectorDB:
 
         elif collection_name == "excursions_collection":
 
-            booking_status = (
-                "booked"
-                if data["booked"]
-                else "not booked"
-            )
+            booking_status = "booked" if data["booked"] else "not booked"
 
             return (
                 f"Excursion: {data['name']} "
@@ -139,11 +138,7 @@ class VectorDB:
 
         elif collection_name == "hotels_collection":
 
-            booking_status = (
-                "booked"
-                if data["booked"]
-                else "not booked"
-            )
+            booking_status = "booked" if data["booked"] else "not booked"
 
             return (
                 f"Hotel {data['name']} "
@@ -158,309 +153,102 @@ class VectorDB:
                 f"{booking_status}."
             )
 
-        elif collection_name == "faq_collection":
-
-            return data["page_content"]
-
         else:
 
             return str(data)
 
     # ---------------------------------------------------------
-    # EMBEDDING
+    # BATCHED EMBEDDING + UPSERT
     # ---------------------------------------------------------
 
-    async def generate_embedding_async(
-        self,
-        content,
-        session=None,
-    ):
+    def _upsert_chunks(self, items, description):
+        """items: list of (text_to_embed, payload, point_key)."""
 
-        try:
+        total = 0
+        for start in tqdm(range(0, len(items), BATCH_SIZE), desc=description):
+            batch = items[start:start + BATCH_SIZE]
+            vectors = generate_embedding([text for text, _, _ in batch])
 
-            embedding = generate_embedding(content)
-
-            if len(embedding) != EMBEDDING_DIMENSION:
-
-                raise ValueError(
-                    f"Embedding dimension mismatch. "
-                    f"Expected {EMBEDDING_DIMENSION}, "
-                    f"got {len(embedding)}"
+            points = []
+            for (text, payload, key), vector in zip(batch, vectors):
+                if len(vector) != EMBEDDING_DIMENSION:
+                    raise ValueError(
+                        f"Embedding dimension mismatch. Expected "
+                        f"{EMBEDDING_DIMENSION}, got {len(vector)}"
+                    )
+                points.append(
+                    PointStruct(
+                        id=str(uuid.uuid5(_POINT_NAMESPACE, f"{self.collection_name}:{key}")),
+                        vector=vector,
+                        payload={"content": text, **payload},
+                    )
                 )
 
-            return embedding
+            self.client.upsert(collection_name=self.collection_name, points=points)
+            total += len(points)
 
-        except Exception as e:
-
-            logger.error(
-                f"Embedding generation failed: {str(e)}"
-            )
-
-            raise
-
-    # ---------------------------------------------------------
-    # PROCESS CHUNK
-    # ---------------------------------------------------------
-
-    async def process_chunk(
-        self,
-        chunk,
-        metadata,
-        session,
-    ):
-
-        embedding = await self.generate_embedding_async(
-            chunk,
-            session,
-        )
-
-        return PointStruct(
-            id=str(uuid.uuid4()),
-            vector=embedding,
-            payload={
-                "content": chunk,
-                **metadata,
-            },
-        )
+        logger.info(f"Indexed {total} chunks into {self.collection_name}")
+        return total
 
     # ---------------------------------------------------------
     # CREATE EMBEDDINGS
     # ---------------------------------------------------------
 
-    async def create_embeddings_async(self):
+    def create_embeddings(self):
 
-        if self.table_name == "faq":
-
-            await self.index_faq_docs()
-
-        else:
-
-            await self.index_regular_docs()
+        if self.table_name == "knowledge_base":
+            return self.index_knowledge_base()
+        return self.index_regular_docs()
 
     # ---------------------------------------------------------
     # NORMAL DATABASE TABLES
     # ---------------------------------------------------------
 
-    async def index_regular_docs(self):
+    def index_regular_docs(self):
 
-        db_connection = sqlite3.connect(
-            settings.SQLITE_DB_PATH
-        )
-
+        db_connection = sqlite3.connect(settings.SQLITE_DB_PATH)
         cursor = db_connection.cursor()
-
-        cursor.execute(
-            f"SELECT * FROM {self.table_name}"
-        )
-
+        cursor.execute(f"SELECT * FROM {self.table_name}")
         rows = cursor.fetchall()
-
-        column_names = [
-            column[0]
-            for column in cursor.description
-        ]
-
+        column_names = [column[0] for column in cursor.description]
         db_connection.close()
 
         if not rows:
+            logger.warning(f"No data found in table {self.table_name}")
+            return 0
 
-            logger.warning(
-                f"No data found in table "
-                f"{self.table_name}"
-            )
-
-            return
-
-        data = [
-            dict(zip(column_names, row))
-            for row in rows
-        ]
-
-        formatted_chunks = []
-
-        for item in data:
-
-            content = self.format_content(
-                item,
-                self.collection_name,
-            )
-
-            chunks = recursive_character_splitting(
-                content
-            )
-
-            for chunk in chunks:
-
+        items = []
+        for row_index, row in enumerate(rows):
+            item = dict(zip(column_names, row))
+            content = self.format_content(item, self.collection_name)
+            for chunk_index, chunk in enumerate(recursive_character_splitting(content)):
                 if chunk:
+                    items.append((chunk, item, f"{row_index}:{chunk_index}"))
 
-                    formatted_chunks.append(
-                        (chunk, item)
-                    )
+        if not items:
+            logger.warning(f"No valid chunks generated for {self.collection_name}")
+            return 0
 
-        if not formatted_chunks:
+        return self._upsert_chunks(items, f"Embedding {self.collection_name}")
 
+    # ---------------------------------------------------------
+    # KNOWLEDGE BASE (policies / FAQs)
+    # ---------------------------------------------------------
+
+    def index_knowledge_base(self):
+
+        chunks = load_knowledge_chunks(settings.KNOWLEDGE_BASE_DIR)
+        if not chunks:
             logger.warning(
-                f"No valid chunks generated for "
-                f"{self.collection_name}"
+                f"No knowledge base documents found in {settings.KNOWLEDGE_BASE_DIR}"
             )
+            return 0
 
-            return
-
-        # Keep this relatively small because the
-        # Sentence Transformer runs locally.
-        batch_size = 10
-
-        async with aiohttp.ClientSession() as session:
-
-            for start in range(
-                0,
-                len(formatted_chunks),
-                batch_size,
-            ):
-
-                batch = formatted_chunks[
-                    start:start + batch_size
-                ]
-
-                tasks = []
-
-                for chunk, metadata in batch:
-
-                    tasks.append(
-                        self.process_chunk(
-                            chunk,
-                            metadata,
-                            session,
-                        )
-                    )
-
-                points = []
-
-                for task in tqdm_asyncio.as_completed(
-                    tasks,
-                    desc=(
-                        f"Generating embeddings for "
-                        f"{self.collection_name} "
-                        f"(batch "
-                        f"{start // batch_size + 1})"
-                    ),
-                    total=len(tasks),
-                ):
-
-                    try:
-
-                        point = await task
-
-                        if point is not None:
-
-                            points.append(point)
-
-                    except Exception as e:
-
-                        logger.error(
-                            f"Error processing chunk: "
-                            f"{str(e)}"
-                        )
-
-                if points:
-
-                    self.client.upsert(
-                        collection_name=self.collection_name,
-                        points=points,
-                    )
-
-                    logger.info(
-                        f"Indexed {len(points)} documents "
-                        f"into {self.collection_name}"
-                    )
-
-        logger.info(
-            f"Finished indexing "
-            f"{self.collection_name}. "
-            f"Total chunks: "
-            f"{len(formatted_chunks)}"
-        )
-
-    # ---------------------------------------------------------
-    # FAQ
-    # ---------------------------------------------------------
-
-    async def index_faq_docs(self):
-
-        faq_url = (
-            "https://storage.googleapis.com/"
-            "benchmarks-artifacts/travel-db/"
-            "swiss_faq.md"
-        )
-
-        async with aiohttp.ClientSession() as session:
-
-            async with session.get(
-                faq_url
-            ) as response:
-
-                faq_text = await response.text()
-
-        docs = [
-            {
-                "page_content": txt.strip()
-            }
-            for txt in re.split(
-                r"(?=\n##)",
-                faq_text
-            )
-            if txt.strip()
+        items = [
+            (chunk.embedding_text, chunk.metadata, chunk.metadata["chunk_id"])
+            for chunk in chunks
         ]
-
-        async with aiohttp.ClientSession() as session:
-
-            tasks = [
-                self.process_chunk(
-                    doc["page_content"],
-                    {"type": "faq"},
-                    session,
-                )
-                for doc in docs
-            ]
-
-            points = await tqdm_asyncio.gather(
-                *tasks,
-                desc="Generating embeddings for FAQ documents",
-            )
-
-        if points:
-
-            for batch in chunked(
-                points,
-                10,
-            ):
-
-                self.client.upsert(
-                    collection_name=self.collection_name,
-                    points=list(batch),
-                )
-
-            logger.info(
-                f"Indexed {len(points)} FAQ documents "
-                f"into {self.collection_name}"
-            )
-
-        else:
-
-            logger.warning(
-                "No FAQ documents were successfully "
-                "embedded and indexed."
-            )
-
-    # ---------------------------------------------------------
-    # PUBLIC CREATE EMBEDDINGS
-    # ---------------------------------------------------------
-
-    def create_embeddings(self):
-
-        asyncio.run(
-            self.create_embeddings_async()
-        )
+        return self._upsert_chunks(items, "Embedding knowledge base")
 
     # ---------------------------------------------------------
     # SEARCH
@@ -473,44 +261,25 @@ class VectorDB:
         with_payload=True,
     ):
 
-        query_vector = generate_embedding(
-            query
-        )
+        query_vector = generate_embedding(query)
 
         if len(query_vector) != EMBEDDING_DIMENSION:
-
             raise ValueError(
                 f"Query embedding dimension mismatch. "
                 f"Expected {EMBEDDING_DIMENSION}, "
                 f"got {len(query_vector)}"
             )
 
-        logger.debug(
-            f"Searching Qdrant with embedding "
-            f"dimension: {len(query_vector)}"
-        )
-
-        search_result = self.client.search(
+        response = self.client.query_points(
             collection_name=self.collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             limit=limit,
             with_payload=with_payload,
         )
 
-        logger.info(
-            f"Vector search completed successfully. "
-            f"Found {len(search_result)} results."
+        logger.debug(
+            f"Vector search on {self.collection_name} returned "
+            f"{len(response.points)} results."
         )
 
-        return search_result
-
-
-if __name__ == "__main__":
-
-    vectordb = VectorDB(
-        table_name="example_table",
-        collection_name="example_collection",
-        create_collection=True,
-    )
-
-    vectordb.create_embeddings()
+        return response.points
