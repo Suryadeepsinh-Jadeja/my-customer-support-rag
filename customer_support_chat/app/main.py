@@ -1,26 +1,23 @@
-# main.py
+# main.py - terminal client for the customer support assistant (development / demos).
+#
+#   python -m customer_support_chat.app.main [--graph-image]
 
-import uuid
-import os  # Import os module for file operations
-from customer_support_chat.app.graph import multi_agentic_graph
-from customer_support_chat.app.services.utils import download_and_prepare_db
+import argparse
+import os
+
+from customer_support_chat.app.core.errors import SupportError
 from customer_support_chat.app.core.logger import logger
-from langchain_core.messages import ToolMessage, HumanMessage, AIMessage
+from customer_support_chat.app.core.settings import get_settings
+from customer_support_chat.app.graph import get_graph
+from customer_support_chat.app.services.chat_service import ChatResult, ChatService
 
-def main():
-    # Ensure the database is downloaded and prepared
-    download_and_prepare_db()
 
-    # Generate and save the graph visualization
+def save_graph_image() -> None:
     try:
         # Generate the graph object with xray=True to include node details
-        graph = multi_agentic_graph.get_graph(xray=True)
-        # Draw the graph as a PNG image using Mermaid
-        graph_image = graph.draw_mermaid_png()
-        graphs_dir = "./graphs"
-        if not os.path.exists(graphs_dir):
-            os.makedirs(graphs_dir)
-        image_path = os.path.join(graphs_dir, "multi-agent-rag-system-graph.png")
+        graph_image = get_graph().get_graph(xray=True).draw_mermaid_png()
+        os.makedirs("./graphs", exist_ok=True)
+        image_path = os.path.join("./graphs", "multi-agent-rag-system-graph.png")
         with open(image_path, "wb") as f:
             f.write(graph_image)
         print(f"Graph saved at {image_path}")
@@ -28,76 +25,63 @@ def main():
         logger.error(f"An error occurred while generating the graph visualization: {e}")
         print("Graph visualization could not be generated. Continuing without it.")
 
-    # Generate a unique thread ID for the session
-    thread_id = str(uuid.uuid4())
 
-    # Configuration with passenger_id and thread_id
-    config = {
-        "configurable": {
-            "passenger_id": "5102 899977",  # Update with a valid passenger ID as needed
-            "thread_id": thread_id,
-        }
-    }
+def show(result: ChatResult) -> None:
+    print(f"\n[{result.agent}] {result.response}")
+    if result.sources:
+        print("Sources: " + "; ".join(f"{s['document_name']} - {s['section']}" for s in result.sources))
+    for action in result.pending_actions:
+        print(f"\n  Pending action: {action.title}")
+        for detail in action.details:
+            print(f"    {detail['label']}: {detail['value']}")
 
-    # Variable to track printed message IDs to avoid duplicates
-    printed_message_ids = set()
 
-    try:
-        while True:
-            user_input = input("User: ")
-            if user_input.strip().lower() in ["quit", "exit", "q"]:
-                print("Goodbye!")
-                break
+def main():
+    parser = argparse.ArgumentParser(description="Chat with the customer support assistant.")
+    parser.add_argument("--graph-image", action="store_true", help="Save the graph as a PNG first.")
+    args = parser.parse_args()
 
-            # Process the user input through the graph
-            events = multi_agentic_graph.stream(
-                {"messages": [("user", user_input)]}, config, stream_mode="values"
-            )
+    if args.graph_image:
+        save_graph_image()
 
-            for event in events:
-                messages = event.get("messages", [])
-                for message in messages:
-                    if message.id not in printed_message_ids:
-                        message.pretty_print()
-                        printed_message_ids.add(message.id)
+    service = ChatService(graph_factory=get_graph)
+    session = None
 
-            # Check for interrupts
-            snapshot = multi_agentic_graph.get_state(config)
-            while snapshot.next:
-                # Interrupt occurred before sensitive tool execution
-                user_input = input(
-                    "\nDo you approve of the above actions? Type 'y' to continue; otherwise, explain your requested changes.\n\n"
+    demo_id = get_settings().DEMO_PASSENGER_ID
+    passenger_id = input(f"Passenger ID [{demo_id or 'blank = guest'}]: ").strip() or demo_id
+    if passenger_id:
+        reference = input("Booking reference or ticket number: ").strip()
+        try:
+            session = service.authenticate(passenger_id, reference)
+            print("Signed in.")
+        except SupportError as e:
+            print(e.user_message, "Continuing as a guest (policy questions only).")
+
+    conversation_id = None
+    print("Type 'quit' to exit.\n")
+    while True:
+        user_input = input("You: ").strip()
+        if user_input.lower() in {"quit", "exit", "q"}:
+            print("Goodbye!")
+            break
+        if not user_input:
+            continue
+        try:
+            result = service.chat(user_input, conversation_id=conversation_id, session=session)
+            conversation_id = result.conversation_id
+            show(result)
+            while result.status == "confirmation_required":
+                answer = input(
+                    "\nDo you approve? Type 'y' to continue; otherwise explain what you'd like instead: "
+                ).strip()
+                approved = answer.lower() in {"y", "yes"}
+                result = service.confirm(
+                    conversation_id, approved, None if approved else answer, session=session
                 )
-                if user_input.strip().lower() == "y":
-                    # Continue execution
-                    result = multi_agentic_graph.invoke(None, config)
-                else:
-                    # Provide feedback to the assistant
-                    tool_call_id = snapshot.value["messages"][-1].tool_calls[0]["id"]
-                    result = multi_agentic_graph.invoke(
-                        {
-                            "messages": [
-                                ToolMessage(
-                                    tool_call_id=tool_call_id,
-                                    content=f"API call denied by user. Reasoning: '{user_input}'. Continue assisting, accounting for the user's input.",
-                                )
-                            ]
-                        },
-                        config,
-                    )
-                # Process the result to display any new messages
-                messages = result.get("messages", [])
-                for message in messages:
-                    if message.id not in printed_message_ids:
-                        message.pretty_print()
-                        printed_message_ids.add(message.id) 
-                        
-                # Update the snapshot
-                snapshot = multi_agentic_graph.get_state(config)
+                show(result)
+        except SupportError as e:
+            print(f"\n{e.user_message}")
 
-    except Exception as e:
-        logger.error(f"An error occurred: {e}")
-        print("An unexpected error occurred. Please check the logs for more details.")
 
 if __name__ == "__main__":
     main()
