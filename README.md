@@ -146,19 +146,23 @@ python -m app.rag.ingest ../knowledge_base
 Run the ingest command again whenever `knowledge_base/` changes; unchanged files are
 skipped. If you add a Gemini key later, run it once more to add the embeddings.
 
-**Embedding quota.** Search embeddings use `gemini-embedding-2`, hard-coded as
-`EMBEDDING_MODEL` in `backend/app/services/llm_service.py`. That model embeds **one text per
-request** and ignores batching, so embedding costs one request per chunk — a five-page
-document is roughly fifty requests. The free tier allows 1000 requests per day, per project,
-**per model**, so hitting the limit on one embedding model does not affect the other, and the
-chat model is unaffected. While the embedding quota is spent, search falls back to
-keyword-only BM25 for anything embedded afterwards; if a *document* cannot be embedded its
-upload fails with `indexing_failed` and can be retried with **Try again**. Changing the model
-means clearing the existing vectors first, because vectors from two models are not comparable:
+**Embedding quota.** Search embeddings use `gemini-embedding-001`, hard-coded as
+`EMBEDDING_MODEL` in `backend/app/services/llm_service.py`. It batches up to 100 chunks per
+request, so the knowledge base costs about nine requests. The free tier allows 1000 requests
+per day, per project, **per model** — a limit that resets in hours, not minutes — and the chat
+model has its own separate quota, so chat keeps working when embeddings are blocked. If a
+*document* cannot be embedded its upload fails with `indexing_failed`; press **Try again**
+after the reset.
+
+Switching to `gemini-embedding-2` is a one-line change, but it needs two things: vectors from
+two different models are **not comparable**, so the existing ones must be cleared first, and
+that model embeds one text per request (no batching), which costs roughly one request per
+chunk. `embed()` detects the short response and retries the batch one text at a time, so both
+models work unchanged.
 
 ```bash
 # in backend/, after editing EMBEDDING_MODEL
-.venv/bin/python -c "import sqlite3; c=sqlite3.connect('dev.db'); c.execute('update knowledge_chunks set embedding=null'); c.commit()"
+.venv/bin/python -c "import sqlite3; c=sqlite3.connect('dev.db'); c.execute('update knowledge_chunks set embedding=null'); c.execute('update document_chunks set embedding=null'); c.commit()"
 python -m app.rag.ingest ../knowledge_base
 ```
 
@@ -288,7 +292,7 @@ likely to change:
 | `DATABASE_URL` | local PostgreSQL | `postgresql+asyncpg://...` or `sqlite+aiosqlite:///./dev.db` |
 | `JWT_SECRET` | none | Signs sign-in tokens. Required in production (32+ characters) |
 | `STORAGE_ENCRYPTION_KEY` | none | Encrypts uploaded files. Required in production; keep a backup |
-| `GEMINI_API_KEY` / `GEMINI_MODEL` | none / `gemini-3.5-flash` | AI document analysis, embeddings and the assistant. Embeddings always use `gemini-embedding-2` (a code constant, not a setting) |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | none / `gemini-3.5-flash` | AI document analysis, embeddings and the assistant. Embeddings always use `gemini-embedding-001` (a code constant, not a setting) |
 | `LLM_PROVIDER` | `gemini` | `fake` = a rule-based stand-in for tests and keyless demos (refused in production) |
 | `FLIGHT_PROVIDER` / `DUFFEL_API_KEY` | `mock` / none | `duffel` + a test key for Duffel's sandbox |
 | `STORAGE_BACKEND` | `local` | `s3` for any S3-compatible store (set the `OBJECT_STORAGE_*` values) |
@@ -312,7 +316,7 @@ likely to change:
 | `Another next dev server is already running` | Only one `npm run dev` can run per `frontend/` folder. Stop the other one, or use `npx next build && npx next start -p 3001` for a second copy. |
 | Flight booking fails: "needs each traveller's date of birth and gender" | You're using Duffel: upload the traveller's passport, and add a phone number to your profile. |
 | Uploaded files can't be opened after changing settings | `STORAGE_ENCRYPTION_KEY` changed; restore the original key. |
-| Upload or ingest fails with `429 RESOURCE_EXHAUSTED` / `embedding failed: ClientError` | The **daily** embedding quota for `gemini-embedding-2` is spent (1000 requests/day, resets in hours, not minutes). Chat keeps working. Wait for the reset and press **Try again** on the document, or re-run the ingest. See *Embedding quota* in section 4.1. |
+| Upload or ingest fails with `429 RESOURCE_EXHAUSTED` / `embedding failed: ClientError` | The **daily** embedding quota for `gemini-embedding-001` is spent (1000 requests/day, resets in hours, not minutes). Chat keeps working. Wait for the reset and press **Try again** on the document, or re-run the ingest. See *Embedding quota* in section 4.1. |
 | A document stays "Failed" after the quota resets | Press **Try again** on the document page; it re-runs the pipeline with the embedding call now succeeding. |
 
 ## 10. Project layout

@@ -268,7 +268,7 @@ class LLMService:
         return vectors
 
 
-EMBEDDING_MODEL = "gemini-embedding-2"
+EMBEDDING_MODEL = "gemini-embedding-001"
 
 
 @lru_cache

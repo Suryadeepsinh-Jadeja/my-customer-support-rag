@@ -113,10 +113,11 @@ processing checklist, extracted fields grouped per flight segment with page and 
 
 - After extraction, each document's pages are split into ~900-character chunks
   (paragraph-aware, with overlap, page number kept) and embedded with Gemini
-  `gemini-embedding-2` (768-d). The document then shows **Ready for AI**.
-  That model ignores batching: it returns one vector per request, so `LLMService.embed`
-  sends one text at a time. It also has its own daily free-tier quota, counted per
-  model, so exhausting one embedding model does not block the other.
+  `gemini-embedding-001` (768-d). The document then shows **Ready for AI**.
+  That model batches up to 100 chunks per request, so the knowledge base costs about nine
+  requests. Its free tier is capped per day, per project and **per model**; `embed()` also
+  copes with `gemini-embedding-2`, which ignores batching and answers a multi-text request
+  with a single vector, by retrying such a batch one text at a time.
 - The knowledge base (`knowledge_base/*.md`) is loaded with
   `python -m app.rag.ingest ../knowledge_base` (Docker does this on start-up). Re-runs skip
   unchanged files, replace changed ones and drop deleted ones; files ingested without a key
