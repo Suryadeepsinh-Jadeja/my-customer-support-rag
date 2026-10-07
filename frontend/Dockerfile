@@ -19,6 +19,8 @@ ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1 PORT=3000 HOSTNAME=0.0.0.0
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
+# `standalone` does not include public/, so it must be copied. Keep this line and the
+# public/ directory: dropping either 404s any static asset in the container.
 COPY --from=build --chown=app:app /app/public ./public
 USER app
 EXPOSE 3000
