@@ -3,9 +3,9 @@ name: Platform CI
 on:
   push:
     branches: [main, rebuild]
-    paths: ["backend/**", "frontend/**", "docker-compose.platform.yml", ".github/workflows/platform-ci.yml"]
+    paths: ["backend/**", "frontend/**", "docker-compose.yml", ".github/workflows/platform-ci.yml"]
   pull_request:
-    paths: ["backend/**", "frontend/**", "docker-compose.platform.yml", ".github/workflows/platform-ci.yml"]
+    paths: ["backend/**", "frontend/**", "docker-compose.yml", ".github/workflows/platform-ci.yml"]
 
 permissions:
   contents: read

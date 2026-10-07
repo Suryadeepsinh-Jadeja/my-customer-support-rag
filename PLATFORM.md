@@ -1,9 +1,8 @@
 # AI Travel Platform
 
-The new full-stack platform being built **next to** the existing support assistant in
-`customer_support_chat/`. It follows the product spec in phases; the existing assistant's
-agents, RAG pipeline and knowledge base are ported in during phases 3–5, after which
-`customer_support_chat/`, `vectorizer/` and the Streamlit UI are retired.
+The full-stack platform, built in phases from the product spec. It replaced the earlier
+LangGraph + Streamlit support assistant, whose agents, RAG pipeline and knowledge base were
+ported in during phases 3–5 and which has since been removed.
 
 ```text
 browser ──► frontend/ (Next.js 16, React 19, TypeScript, Tailwind, shadcn/ui)

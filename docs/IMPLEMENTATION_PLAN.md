@@ -30,10 +30,12 @@ start phase N."*
 - **The original product spec** (89 sections) was pasted in the first chat. Section numbers
   below (§) refer to it. Its key requirements are restated in each phase, so you don't need
   the spec itself.
-- **Old app:** `customer_support_chat/`, `vectorizer/`, `streamlit_app.py`, root
-  `docker-compose.yml` and `tests/` are the previous LangGraph support assistant. Keep them
-  working until phase 11, then delete them. Their prompts and agent split are worth
-  reading as reference (`customer_support_chat/app/services/assistants/`).
+- **Old app: removed.** `customer_support_chat/`, `vectorizer/`, `streamlit_app.py`, the old
+  `tests/`, `scripts/`, root `Dockerfile` / `docker-compose.yml` / `Makefile` /
+  `requirements.txt` / `pyproject.toml` / `poetry.lock` / `.env.example`, `.streamlit/`,
+  `.vscode/`, `docs/LEGACY_SUPPORT_ASSISTANT.md`, `graphs/` and `images/` were deleted in
+  phase 11. `docker-compose.platform.yml` became `docker-compose.yml`. Recover any of it from
+  the branch history before commit `d59f819`'s successor.
 
 ---
 
@@ -154,7 +156,7 @@ frontend/
   lib/api.ts                  api() + uploadFile() (XHR progress), CSRF header
   components/ui/              shadcn/ui on Base UI
 knowledge_base/               policy Markdown (# Title, key: value meta, ## sections)
-docker-compose.platform.yml   postgres(pgvector), minio, backend, worker, frontend, clamav
+docker-compose.yml            postgres(pgvector), minio, backend, worker, frontend, clamav
 ```
 
 ### Patterns to reuse
@@ -582,10 +584,14 @@ Tests: `tests/test_duffel.py`, `tests/test_booking_safety.py`.
   agents, booking flow, document processing, env vars, setup, Docker, migrations,
   ingestion, tests, mock vs real providers, deployment, security, limitations and future
   work.
-- **Retire the old app:** delete `customer_support_chat/`, `vectorizer/`,
-  `streamlit_app.py`, the old `tests/`, `Dockerfile`, `docker-compose.yml`, `Makefile`
-  and `requirements.txt`. Rename `docker-compose.platform.yml` to `docker-compose.yml`
-  and update the CI paths.
+- **Retire the old app: done.** Deleted `customer_support_chat/`, `vectorizer/`,
+  `streamlit_app.py`, the old `tests/`, `scripts/`, `Dockerfile`, `docker-compose.yml`,
+  `Makefile`, `requirements.txt`, `pyproject.toml`, `poetry.lock`, the root `.env.example`,
+  `.streamlit/`, `.vscode/`, `docs/LEGACY_SUPPORT_ASSISTANT.md`, `graphs/` and `images/`.
+  Renamed `docker-compose.platform.yml` to `docker-compose.yml` and updated the CI path
+  filters, `backend/.env.example`, `knowledge_base/README.md`, README.md and PLATFORM.md.
+  The remaining phase 11 work is deployment, monitoring and folding PLATFORM.md into the
+  README.
 
 ---
 

@@ -15,10 +15,8 @@ What each phase delivers, the full API list and known limitations are in
 [PLATFORM.md](PLATFORM.md). The build plan is in
 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
-> The repository also still contains the previous support assistant
-> (`customer_support_chat/`, Streamlit). It's documented in
-> [docs/LEGACY_SUPPORT_ASSISTANT.md](docs/LEGACY_SUPPORT_ASSISTANT.md) and will be removed.
-> Everything below is about the new platform in `backend/` and `frontend/`.
+Everything lives in `backend/` and `frontend/`. The earlier LangGraph + Streamlit support
+assistant it replaced has been removed.
 
 ---
 
@@ -71,7 +69,7 @@ the backend, a background worker and the frontend.
 3. Start it:
 
    ```bash
-   docker compose -f docker-compose.platform.yml up -d --build
+   docker compose up -d --build
    ```
 
    The backend applies the database migrations and loads the knowledge base on start-up.
@@ -225,7 +223,7 @@ python -m app.cli promote someone@example.com        # make an existing user an 
 ```
 
 With Docker:
-`docker compose -f docker-compose.platform.yml exec backend python -m app.cli create-admin admin@example.com`
+`docker compose exec backend python -m app.cli create-admin admin@example.com`
 
 Sign in as that user and open **Admin** in the sidebar. It shows system health, users,
 document processing, bookings, assistant tool usage and recent errors, but never document
@@ -328,6 +326,6 @@ backend/            FastAPI app (app/), migrations (alembic/), tests (tests/)
 frontend/           Next.js app
   e2e/              Playwright end-to-end demo test and its fixtures
 knowledge_base/     travel-policy Markdown loaded into the assistant's search
-docs/               implementation plan, legacy app documentation
-docker-compose.platform.yml   the full stack in Docker
+docs/               implementation plan
+docker-compose.yml  the full stack in Docker
 ```
