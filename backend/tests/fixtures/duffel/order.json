@@ -1,0 +1,294 @@
+{
+  "data": {
+    "void_window_ends_at": null,
+    "synced_at": "2026-10-06T18:29:47Z",
+    "available_actions": [
+      "cancel",
+      "change",
+      "update"
+    ],
+    "airline_initiated_changes": [],
+    "tax_currency": "USD",
+    "documents": [
+      {
+        "passenger_ids": [
+          "pas_0000BB8xQHhFW23rbnBxsg"
+        ],
+        "unique_identifier": "1",
+        "type": "electronic_ticket"
+      }
+    ],
+    "tax_amount": "34.23",
+    "base_currency": "USD",
+    "base_amount": "190.18",
+    "total_currency": "USD",
+    "tax_breakdown": [
+      {
+        "carrier_imposed": false,
+        "amount": "17.11",
+        "currency": "USD",
+        "description": "UK Air Passenger Duty, an excise duty charged on each passenger departing from a UK airport, banded by distance and cabin.",
+        "name": "UK Air Passenger Duty",
+        "code": "GB"
+      },
+      {
+        "carrier_imposed": false,
+        "amount": "10.26",
+        "currency": "USD",
+        "description": "The per-passenger service charge levied by UK airports for use of terminal facilities; it is the airport's charge, not a government tax.",
+        "name": "UK airport passenger service charge",
+        "code": "UB"
+      },
+      {
+        "carrier_imposed": true,
+        "amount": "6.86",
+        "currency": "USD",
+        "description": "A surcharge set by the airline itself to cover costs such as fuel and insurance; it is not a government or airport charge.",
+        "name": "Airline fuel and insurance surcharge",
+        "code": "YQ"
+      }
+    ],
+    "offer_id": "off_0000BB8xQI3ECJdshxTW95",
+    "booking_reference": "JPZ3RG",
+    "booking_references": [
+      {
+        "booking_reference": "JPZ3RG",
+        "carrier": {
+          "logo_symbol_url": "https://assets.duffel.com/img/airlines/for-light-background/full-color-logo/ZZ.svg",
+          "logo_lockup_url": null,
+          "conditions_of_carriage_url": "https://duffelairways.com/dummy-url/conditions-of-carriage",
+          "iata_code": "ZZ",
+          "name": "Duffel Airways",
+          "id": "arl_00009VME7D6ivUu8dn35WK"
+        }
+      }
+    ],
+    "payment_status": {
+      "price_guarantee_expires_at": null,
+      "payment_required_by": null,
+      "paid_at": "2026-10-06T18:29:47Z",
+      "awaiting_payment": false
+    },
+    "slices": [
+      {
+        "destination_type": "airport",
+        "origin_type": "airport",
+        "fare_brand_name": "Basic",
+        "segments": [
+          {
+            "origin_terminal": "2",
+            "destination_terminal": "1",
+            "aircraft": {
+              "iata_code": "773",
+              "name": "Boeing 777-300",
+              "id": "arc_00009VMF8AhXSSRnQDI6HE"
+            },
+            "departing_at": "2026-11-20T14:42:00",
+            "arriving_at": "2026-11-20T17:40:00",
+            "stops": [],
+            "operating_carrier_flight_number": "3829",
+            "operating_carrier": {
+              "logo_symbol_url": "https://assets.duffel.com/img/airlines/for-light-background/full-color-logo/ZZ.svg",
+              "logo_lockup_url": null,
+              "conditions_of_carriage_url": "https://duffelairways.com/dummy-url/conditions-of-carriage",
+              "iata_code": "ZZ",
+              "name": "Duffel Airways",
+              "id": "arl_00009VME7D6ivUu8dn35WK"
+            },
+            "marketing_carrier_flight_number": "3829",
+            "marketing_carrier": {
+              "logo_symbol_url": "https://assets.duffel.com/img/airlines/for-light-background/full-color-logo/ZZ.svg",
+              "logo_lockup_url": null,
+              "conditions_of_carriage_url": "https://duffelairways.com/dummy-url/conditions-of-carriage",
+              "iata_code": "ZZ",
+              "name": "Duffel Airways",
+              "id": "arl_00009VME7D6ivUu8dn35WK"
+            },
+            "passengers": [
+              {
+                "baggages": [
+                  {
+                    "quantity": 1,
+                    "type": "checked"
+                  },
+                  {
+                    "quantity": 1,
+                    "type": "carry_on"
+                  }
+                ],
+                "cabin_class_marketing_name": "Economy",
+                "passenger_id": "pas_0000BB8xQHhFW23rbnBxsg",
+                "seat": null,
+                "cabin_class": "economy"
+              }
+            ],
+            "distance": "5539.8359982030115",
+            "duration": "PT7H58M",
+            "destination": {
+              "iata_country_code": "US",
+              "city_name": "New York",
+              "icao_code": "KJFK",
+              "iata_city_code": "NYC",
+              "iata_code": "JFK",
+              "latitude": 40.640556,
+              "longitude": -73.778519,
+              "city": {
+                "iata_country_code": "US",
+                "city_name": null,
+                "icao_code": null,
+                "iata_city_code": "NYC",
+                "iata_code": "NYC",
+                "latitude": null,
+                "longitude": null,
+                "time_zone": null,
+                "type": "city",
+                "name": "New York",
+                "id": "cit_nyc_us"
+              },
+              "time_zone": "America/New_York",
+              "type": "airport",
+              "name": "John F. Kennedy International Airport",
+              "id": "arp_jfk_us"
+            },
+            "origin": {
+              "iata_country_code": "GB",
+              "city_name": "London",
+              "icao_code": "EGLL",
+              "iata_city_code": "LON",
+              "iata_code": "LHR",
+              "latitude": 51.470311,
+              "longitude": -0.458118,
+              "city": {
+                "iata_country_code": "GB",
+                "city_name": null,
+                "icao_code": null,
+                "iata_city_code": "LON",
+                "iata_code": "LON",
+                "latitude": null,
+                "longitude": null,
+                "time_zone": null,
+                "type": "city",
+                "name": "London",
+                "id": "cit_lon_gb"
+              },
+              "time_zone": "Europe/London",
+              "type": "airport",
+              "name": "Heathrow Airport",
+              "id": "arp_lhr_gb"
+            },
+            "id": "seg_0000BB8xQI3ECJdshxTW8y"
+          }
+        ],
+        "conditions": {
+          "change_before_departure": {
+            "penalty_currency": null,
+            "penalty_amount": null,
+            "allowed": false
+          }
+        },
+        "duration": "PT7H58M",
+        "destination": {
+          "iata_country_code": "US",
+          "city_name": "New York",
+          "icao_code": "KJFK",
+          "iata_city_code": "NYC",
+          "iata_code": "JFK",
+          "latitude": 40.640556,
+          "longitude": -73.778519,
+          "city": {
+            "iata_country_code": "US",
+            "city_name": null,
+            "icao_code": null,
+            "iata_city_code": "NYC",
+            "iata_code": "NYC",
+            "latitude": null,
+            "longitude": null,
+            "time_zone": null,
+            "type": "city",
+            "name": "New York",
+            "id": "cit_nyc_us"
+          },
+          "time_zone": "America/New_York",
+          "type": "airport",
+          "name": "John F. Kennedy International Airport",
+          "id": "arp_jfk_us"
+        },
+        "origin": {
+          "iata_country_code": "GB",
+          "city_name": "London",
+          "icao_code": "EGLL",
+          "iata_city_code": "LON",
+          "iata_code": "LHR",
+          "latitude": 51.470311,
+          "longitude": -0.458118,
+          "city": {
+            "iata_country_code": "GB",
+            "city_name": null,
+            "icao_code": null,
+            "iata_city_code": "LON",
+            "iata_code": "LON",
+            "latitude": null,
+            "longitude": null,
+            "time_zone": null,
+            "type": "city",
+            "name": "London",
+            "id": "cit_lon_gb"
+          },
+          "time_zone": "Europe/London",
+          "type": "airport",
+          "name": "Heathrow Airport",
+          "id": "arp_lhr_gb"
+        },
+        "id": "sli_0000BB8xQI3ECJdshxTW93"
+      }
+    ],
+    "live_mode": false,
+    "total_amount": "224.41",
+    "created_at": "2026-10-06T18:29:47.785358Z",
+    "passengers": [
+      {
+        "born_on": "1990-04-02",
+        "loyalty_programme_accounts": [],
+        "family_name": "Mehta",
+        "given_name": "Asha",
+        "infant_passenger_id": null,
+        "phone_number": "+442080160508",
+        "user_id": null,
+        "gender": "f",
+        "email": "asha.test@example.com",
+        "title": "ms",
+        "type": "adult",
+        "id": "pas_0000BB8xQHhFW23rbnBxsg"
+      }
+    ],
+    "cancellation": null,
+    "conditions": {
+      "refund_before_departure": {
+        "penalty_currency": null,
+        "penalty_amount": null,
+        "allowed": false
+      },
+      "change_before_departure": {
+        "penalty_currency": null,
+        "penalty_amount": null,
+        "allowed": false
+      }
+    },
+    "cancelled_at": null,
+    "changes": [],
+    "content": "managed",
+    "services": [],
+    "users": [],
+    "metadata": null,
+    "type": "instant",
+    "owner": {
+      "logo_symbol_url": "https://assets.duffel.com/img/airlines/for-light-background/full-color-logo/ZZ.svg",
+      "logo_lockup_url": null,
+      "conditions_of_carriage_url": "https://duffelairways.com/dummy-url/conditions-of-carriage",
+      "iata_code": "ZZ",
+      "name": "Duffel Airways",
+      "id": "arl_00009VME7D6ivUu8dn35WK"
+    },
+    "id": "ord_0000BB8xQnwFdn4jbaSOi0"
+  }
+}

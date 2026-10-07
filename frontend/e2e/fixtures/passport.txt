@@ -1,0 +1,11 @@
+PASSPORT
+Type P   Country code UTO
+Surname ERIKSSON
+Given names ANNA MARIA
+Nationality: UTOPIAN
+Date of birth: 12 AUG 1974
+Date of issue: 16 APR 2007
+Date of expiry: 15 APR 2012
+
+P<UTOERIKSSON<<ANNA<MARIA<<<<<<<<<<<<<<<<<<<
+L898902C36UTO7408122F1204159ZE184226B<<<<<10

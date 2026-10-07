@@ -34,8 +34,10 @@ and is not official airline policy.
 
 ## Updating
 
-After adding or editing documents, rebuild only the knowledge collection:
+After adding or editing documents, reload the knowledge base from `backend/`:
 
 ```bash
-python scripts/ingest.py --only knowledge_base
+python -m app.rag.ingest ../knowledge_base
 ```
+
+Unchanged files are skipped, changed ones replaced and deleted ones dropped.

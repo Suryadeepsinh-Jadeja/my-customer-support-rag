@@ -1,0 +1,15 @@
+ELECTRONIC TICKET RECEIPT
+Passenger name: ASHA MEHTA
+Booking reference: X7KQ2P
+Ticket number: 724 2412345678
+Airline: SWISS
+Flight: LX 154
+From: Mumbai (BOM)
+To: Zurich (ZRH)
+Departure date: 20 Oct 2026
+Departure time: 01:45
+Arrival time: 07:10
+Terminal: 2
+Seat: 34A
+Baggage allowance: 1 x 23 kg
+Total: CHF 812.40

@@ -1,0 +1,15 @@
+{
+  "errors": [
+    {
+      "documentation_url": "https://duffel.com/docs/api/overview/response-handling",
+      "title": "Not found",
+      "type": "invalid_request_error",
+      "message": "The resource you are trying to access does not exist.",
+      "code": "not_found"
+    }
+  ],
+  "meta": {
+    "request_id": "GNwEQcdduc6_3boAUFeF",
+    "status": 404
+  }
+}
