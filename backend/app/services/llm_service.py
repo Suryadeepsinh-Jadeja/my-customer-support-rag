@@ -221,8 +221,19 @@ class LLMService:
             return ModelTurn(calls=calls, raw=raw)
         return ModelTurn(text=(response.text or "").strip(), raw=raw)
 
+    @staticmethod
+    def _unit_vector(embedding) -> list[float]:
+        """Gemini vectors are normalised here so cosine is a plain dot product."""
+        values = embedding.values or []
+        norm = sum(x * x for x in values) ** 0.5 or 1.0
+        return [x / norm for x in values]
+
     async def embed(self, texts: list[str], *, query: bool = False) -> list[list[float]]:
-        """Unit-length embeddings (768-d). `query=True` for search queries."""
+        """Unit-length embeddings (768-d). `query=True` for search queries.
+
+        gemini-embedding-2 answers a multi-text request with a single vector, so a batch
+        that comes back short is retried one text at a time.
+        """
         from google.genai import types
 
         from app.db.models.rag import EMBEDDING_DIM
@@ -232,26 +243,32 @@ class LLMService:
             task_type="RETRIEVAL_QUERY" if query else "RETRIEVAL_DOCUMENT",
             output_dimensionality=EMBEDDING_DIM,
         )
-        vectors: list[list[float]] = []
-        for i in range(0, len(texts), 100):  # API batch limit
+
+        async def embed_batch(batch: list[str]) -> list[list[float]]:
             try:
                 response = await asyncio.wait_for(
                     client.aio.models.embed_content(
-                        model=EMBEDDING_MODEL, contents=texts[i:i + 100], config=config
+                        model=EMBEDDING_MODEL, contents=batch, config=config
                     ),
                     self.timeout,
                 )
             except Exception as exc:
                 raise LLMError(f"embedding failed: {type(exc).__name__}") from exc
-            for e in response.embeddings or []:
-                norm = sum(x * x for x in e.values or []) ** 0.5 or 1.0
-                vectors.append([x / norm for x in e.values or []])
+            embeddings = response.embeddings or []
+            if len(batch) > 1 and len(embeddings) < len(batch):  # the model ignored the batch
+                return [vector for text in batch
+                        for vector in await embed_batch([text])]
+            return [self._unit_vector(e) for e in embeddings]
+
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), 100):  # API batch limit
+            vectors.extend(await embed_batch(texts[i:i + 100]))
         if len(vectors) != len(texts):
             raise LLMError("embedding count mismatch")
         return vectors
 
 
-EMBEDDING_MODEL = "gemini-embedding-001"
+EMBEDDING_MODEL = "gemini-embedding-2"
 
 
 @lru_cache

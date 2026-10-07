@@ -14,7 +14,7 @@ from typing import Any
 
 from app.providers.base import BookingProvider, ProviderError
 
-CURRENCY = "CHF"
+CURRENCY = "USD"
 OFFERS_PER_SEARCH = 5
 
 # Parameter order inside offer ids, per kind.
@@ -33,7 +33,7 @@ CABIN_FACTOR = {"economy": 1.0, "premium_economy": 1.6, "business": 3.2, "first"
 FARES = [("Light", 1.0, "Hand baggage only", "none"),
          ("Classic", 1.3, "1 x 23 kg", "fee"),
          ("Flex", 1.8, "2 x 23 kg", "full")]
-CANCELLATION_FEE = 150.0  # Classic fares (matches the knowledge-base refund policy)
+CANCELLATION_FEE = 150.0  # Classic fares; the refund policy still quotes this in CHF
 
 HOTELS = ["Grand Central Hotel", "Riverside Suites", "Old Town Inn", "Park Plaza",
           "Harbour View Hotel", "City Lodge", "The Royal Garden"]

@@ -114,7 +114,10 @@ processing checklist, extracted fields grouped per flight segment with page and 
 
 - After extraction, each document's pages are split into ~900-character chunks
   (paragraph-aware, with overlap, page number kept) and embedded with Gemini
-  `gemini-embedding-001` (768-d). The document then shows **Ready for AI**.
+  `gemini-embedding-2` (768-d). The document then shows **Ready for AI**.
+  That model ignores batching: it returns one vector per request, so `LLMService.embed`
+  sends one text at a time. It also has its own daily free-tier quota, counted per
+  model, so exhausting one embedding model does not block the other.
 - The knowledge base (`knowledge_base/*.md`) is loaded with
   `python -m app.rag.ingest ../knowledge_base` (Docker does this on start-up). Re-runs skip
   unchanged files, replace changed ones and drop deleted ones; files ingested without a key
@@ -217,8 +220,10 @@ Live check with real Gemini (ticket, specimen passport and hotel booking uploade
   excursions generated from the search parameters with a seeded RNG. What is offered
   depends on the route or city, prices also on the date, so a date change keeps the same
   flight or hotel. Offer ids encode the search, so offers resolve again without storage.
-  Everything is marked `provider="mock"` / `test_booking`, and refunds follow the fare
-  (Light none, Classic minus CHF 150, Flex full; refundable hotels, cars and excursions in full).
+  Everything is marked `provider="mock"` / `test_booking`, prices are in **USD**, and refunds
+  follow the fare (Light none, Classic minus a USD 150 fee, Flex full; refundable hotels, cars
+  and excursions in full). The cancellation fee mirrors the amount in the knowledge base, which
+  is still quoted in CHF.
 - **Bookings** (`bookings` table, migration 0005): one table with `kind` and a `details`
   JSON snapshot of the offer instead of a table per kind, since the UI and agents only need
   the common columns. A **state machine** (`app/services/booking_state.py`) allows only
@@ -246,7 +251,8 @@ Live check with real Gemini (ticket, specimen passport and hotel booking uploade
   `POST /api/bookings/{id}/cancel` and `.../modify {start_date, end_date?}`, which return a
   confirmation to approve. Booking endpoints are limited to 20 per minute per user.
 
-Live check with real Gemini (§84 steps 7-8, home airport BOM in the profile):
+Live check with real Gemini (§84 steps 7-8, home airport BOM in the profile). Recorded while
+the mock provider still priced in CHF; the mock now returns the same offers in USD.
 
 1. "Book my flight to London for October 20": the flight agent used BOM from the profile
    without asking and listed 5 test offers (TK879 CHF 132.42 Light, LH834 CHF 229.67, ...).
@@ -330,7 +336,8 @@ trimmed of fields the adapter doesn't read).
   - The account set-up checklist is now a banner on the new-chat page.
 - **Sidebar:** New conversation, the conversation list, Documents, Bookings, Profile,
   Travel preferences, Settings and Sign out. On mobile it's a drawer. A conversation can
-  be deleted from its header.
+  be deleted from its header, or from a delete button that appears at the right of its
+  row in the sidebar on hover (or keyboard focus) and asks for confirmation.
 - **Bookings** (`/bookings`): Upcoming / Completed / Cancelled tabs. Cards show type,
   destination, dates, status badge (CONFIRMED / PENDING / CANCELLED / FAILED),
   confirmation number, price and a "Test booking" label.

@@ -41,7 +41,7 @@ async def test_price_change_needs_a_new_confirmation(client, user_token, llm, mo
     assert result["message"]["type"] == "CONFIRMATION_REQUEST"
     new_price = round(old_price + 25, 2)
     assert result["message"]["text"].startswith(
-        f"The price changed from {old_price:.2f} to {new_price:.2f} CHF. Nothing was booked")
+        f"The price changed from {old_price:.2f} to {new_price:.2f} USD. Nothing was booked")
     (again,) = result["message"]["cards"]
     assert again["summary"]["price"] == new_price
     assert again["summary"]["previous_price"] == old_price

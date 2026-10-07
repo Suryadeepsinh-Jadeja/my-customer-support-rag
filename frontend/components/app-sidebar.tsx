@@ -1,9 +1,10 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarCheck,
   FileText,
+  Loader2,
   LogOut,
   Menu,
   MessageSquare,
@@ -12,13 +13,25 @@ import {
   Settings,
   ShieldCheck,
   SlidersHorizontal,
+  Trash2,
   UserRound,
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { useSignOut } from "@/hooks/use-current-user";
@@ -43,6 +56,53 @@ function initials(name: string, email: string) {
 const link =
   "flex items-center gap-3 rounded-lg px-3 py-2 text-sm text-muted-foreground transition-colors hover:bg-muted hover:text-foreground";
 
+function DeleteConversation({ id, title, isActive }: { id: string; title: string; isActive: boolean }) {
+  const router = useRouter();
+  const queryClient = useQueryClient();
+  const remove = useMutation({
+    mutationFn: () => api(`/conversations/${id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["conversations"] });
+      queryClient.removeQueries({ queryKey: ["conversation", id] });
+      // Only leave the page if the conversation being deleted is the one on screen.
+      if (isActive) router.replace("/");
+      toast.success("Conversation deleted.");
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-7 text-muted-foreground hover:text-destructive"
+            aria-label={`Delete conversation: ${title}`}
+          />
+        }
+      >
+        <Trash2 className="size-3.5" />
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Delete this conversation?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The messages are removed. Your bookings and documents are not affected.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <Button variant="destructive" onClick={() => remove.mutate()} disabled={remove.isPending}>
+            {remove.isPending && <Loader2 className="animate-spin" aria-hidden />}
+            Delete
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 function Conversations({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const { data: conversations } = useQuery({
@@ -59,16 +119,25 @@ function Conversations({ onNavigate }: { onNavigate?: () => void }) {
         {conversations.slice(0, 30).map((c) => {
           const active = pathname === `/chat/${c.id}`;
           return (
-            <li key={c.id}>
+            // min-w-0: a grid item defaults to min-width:auto, so a long title would
+            // force the row wider than the sidebar and push the button out of view.
+            // The button is a sibling of the link, not a child: a link may not contain
+            // another interactive element. It sits on top of the row's right edge.
+            <li key={c.id} className="group relative min-w-0">
               <Link
                 href={`/chat/${c.id}`}
                 onClick={onNavigate}
                 aria-current={active ? "page" : undefined}
-                className={cn(link, "py-1.5", active && "bg-muted font-medium text-foreground")}
+                className={cn(link, "py-1.5 pr-9", active && "bg-muted font-medium text-foreground")}
               >
                 <MessageSquare className="size-4 shrink-0" aria-hidden />
                 <span className="truncate">{c.title}</span>
               </Link>
+              <span
+                className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 transition-opacity focus-within:opacity-100 group-hover:opacity-100"
+              >
+                <DeleteConversation id={c.id} title={c.title} isActive={active} />
+              </span>
             </li>
           );
         })}

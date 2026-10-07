@@ -152,7 +152,7 @@ async def test_cancel_through_the_assistant_needs_confirmation(client, user_toke
     bookings, pending = [r.response["untrusted_data"] for r in llm.tool_results()]
     assert bookings["bookings"][0]["booking_id"] == booking["id"]
     assert pending["status"] == "awaiting_user_confirmation"
-    assert pending["summary"]["refund"]["currency"] == "CHF"
+    assert pending["summary"]["refund"]["currency"] == "USD"
     still = (await client.get(f"/api/bookings/{booking['id']}", headers=bearer(user_token)))
     assert still.json()["status"] == "confirmed"
 
